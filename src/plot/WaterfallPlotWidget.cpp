@@ -118,9 +118,19 @@ void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
     if (!frame || frame->bins.empty()) {
         return;
     }
+
+    const bool frequencyRangeChanged = latestFrame_ && (
+        latestFrame_->metadata.centerFrequencyHz != frame->metadata.centerFrequencyHz
+        || latestFrame_->metadata.spanHz != frame->metadata.spanHz
+        || latestFrame_->metadata.binCount != frame->metadata.binCount
+        || latestFrame_->metadata.configurationEpoch != frame->metadata.configurationEpoch);
+
+    if (frequencyRangeChanged) {
+        clear();
+    }
     latestFrame_ = frame;
 
-    if (bufferImage_.isNull() || bufferWidth_ != plotRect_.width()) {
+    if (bufferImage_.isNull() || plotRect_ != calculatePlotRect()) {
         updatePlotGeometry();
     }
 
@@ -145,15 +155,16 @@ void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
         columnMaxAmplitudes_[col] = maxVal;
     }
 
-    // Write to ring buffer scanline
+    // Advance ring buffer head backwards so increasing index goes chronologically backwards (top to bottom)
+    headRow_ = (headRow_ - 1 + historyDepth_) % historyDepth_;
+    rowCount_ = std::min(rowCount_ + 1, historyDepth_);
+    ++totalFramesAdded_;
+
+    // Write to ring buffer scanline at headRow_
     std::uint8_t* scanLine = bufferImage_.scanLine(headRow_);
     for (int col = 0; col < bufferWidth_; ++col) {
         scanLine[col] = Colormap::mapToColorIndex(columnMaxAmplitudes_[col], referenceLevel_, bottomLevel_);
     }
-
-    headRow_ = (headRow_ + 1) % historyDepth_;
-    rowCount_ = std::min(rowCount_ + 1, historyDepth_);
-    ++totalFramesAdded_;
 
     update(plotRect_);
 }
@@ -167,6 +178,10 @@ void WaterfallPlotWidget::resizeEvent(QResizeEvent* event)
 void WaterfallPlotWidget::paintEvent(QPaintEvent*)
 {
     paintTimer_.restart();
+
+    if (plotRect_ != calculatePlotRect()) {
+        updatePlotGeometry();
+    }
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -242,27 +257,32 @@ void WaterfallPlotWidget::drawWaterfallImage(QPainter& painter)
     painter.setClipRect(plotRect_);
 
     if (rowCount_ < historyDepth_) {
-        // Linear buffer partially filled: headRow_ rows from 0 to headRow_ - 1
-        const QRect sourceRect(0, 0, bufferWidth_, headRow_);
-        const QRect targetRect(plotRect_.left(), plotRect_.top(),
-                              plotRect_.width(),
-                              static_cast<int>(plotRect_.height() * (static_cast<double>(headRow_) / historyDepth_)));
-        // Draw inverted vertically so newest is at the top
+        // Partially filled ring buffer: valid rowCount_ rows starting at headRow_ to historyDepth_ - 1
+        const int sourceY = headRow_;
+        const int sourceH = rowCount_;
+        const int targetH = static_cast<int>(std::round(plotRect_.height() * (static_cast<double>(rowCount_) / historyDepth_)));
+
+        const QRect sourceRect(0, sourceY, bufferWidth_, sourceH);
+        const QRect targetRect(plotRect_.left(), plotRect_.top(), plotRect_.width(), targetH);
         painter.drawImage(targetRect, bufferImage_, sourceRect);
     } else {
         // Full ring buffer: split into two slices
-        // Slice 1 (Top / Recent): [0, headRow_)
-        const double frac1 = static_cast<double>(headRow_) / historyDepth_;
-        const int h1 = static_cast<int>(std::round(plotRect_.height() * frac1));
-        const QRect source1(0, 0, bufferWidth_, headRow_);
-        const QRect target1(plotRect_.left(), plotRect_.top(), plotRect_.width(), h1);
+        // Slice 1 (Top / Recent): [headRow_, historyDepth_)
+        const int h1Rows = historyDepth_ - headRow_;
+        const int h1Pixels = static_cast<int>(std::round(plotRect_.height() * (static_cast<double>(h1Rows) / historyDepth_)));
+        const QRect source1(0, headRow_, bufferWidth_, h1Rows);
+        const QRect target1(plotRect_.left(), plotRect_.top(), plotRect_.width(), h1Pixels);
 
-        // Slice 2 (Bottom / Older): [headRow_, historyDepth_)
-        const QRect source2(0, headRow_, bufferWidth_, historyDepth_ - headRow_);
-        const QRect target2(plotRect_.left(), plotRect_.top() + h1, plotRect_.width(), plotRect_.height() - h1);
+        // Slice 2 (Bottom / Older): [0, headRow_)
+        const int h2Rows = headRow_;
+        const int h2Pixels = plotRect_.height() - h1Pixels;
+        const QRect source2(0, 0, bufferWidth_, h2Rows);
+        const QRect target2(plotRect_.left(), plotRect_.top() + h1Pixels, plotRect_.width(), h2Pixels);
 
         painter.drawImage(target1, bufferImage_, source1);
-        painter.drawImage(target2, bufferImage_, source2);
+        if (h2Rows > 0 && h2Pixels > 0) {
+            painter.drawImage(target2, bufferImage_, source2);
+        }
     }
 
     painter.restore();

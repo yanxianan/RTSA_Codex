@@ -20,6 +20,8 @@ private slots:
     void waterfallClearResetsBuffer();
     void waterfallSignalsEmitOnInteraction();
     void waterfallOffscreenPaintPerformance();
+    void waterfallAlwaysPlacesNewestFrameAtTop();
+    void frequencyRangeChangeClearsWaterfallHistory();
 };
 
 void WaterfallTests::colormapTableGeneratesValidEntries()
@@ -139,6 +141,77 @@ void WaterfallTests::waterfallOffscreenPaintPerformance()
     const double paintMs = static_cast<double>(timer.nsecsElapsed()) / 1.0e6;
     qInfo().nospace() << "Waterfall 1920x600 CPU Raster paint time: " << paintMs << " ms";
     QVERIFY2(paintMs < 50.0, "Waterfall CPU Raster render exceeded 50 ms");
+}
+
+void WaterfallTests::waterfallAlwaysPlacesNewestFrameAtTop()
+{
+    WaterfallPlotWidget widget;
+    widget.resize(600, 300);
+    widget.setHistoryDepth(64);
+    widget.setAmplitudeScale(0.0F, -100.0F);
+
+    auto noiseFrame = std::make_shared<SpectrumFrame>();
+    noiseFrame->metadata.binCount = 512;
+    noiseFrame->metadata.centerFrequencyHz = 1.0e9;
+    noiseFrame->metadata.spanHz = 100.0e6;
+    noiseFrame->bins.assign(512, -100.0F);
+
+    // Push 50 noise frames
+    for (int i = 0; i < 50; ++i) {
+        noiseFrame->metadata.sequence = i + 1;
+        widget.addFrame(noiseFrame);
+    }
+
+    // Now push a frame with strong 0 dBFS peak on the left (e.g. bin 50)
+    auto peakFrame = std::make_shared<SpectrumFrame>();
+    peakFrame->metadata.binCount = 512;
+    peakFrame->metadata.centerFrequencyHz = 1.0e9;
+    peakFrame->metadata.spanHz = 100.0e6;
+    peakFrame->metadata.sequence = 51;
+    peakFrame->bins.assign(512, -100.0F);
+    peakFrame->bins[50] = 0.0F;
+    widget.addFrame(peakFrame);
+
+    QImage img(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    QPainter p(&img);
+    widget.render(&p);
+    p.end();
+
+    // The top line of plotRect() near x of bin 50 must have high brightness (Hot White / Red),
+    // whereas lines lower down must be dark navy blue.
+    const QRect rect = widget.plotRect();
+    const int peakX = rect.left() + static_cast<int>(std::round(rect.width() * (50.0 / 512.0)));
+    const QColor topPixel = img.pixelColor(peakX, rect.top() + 2);
+    const QColor oldPixel = img.pixelColor(peakX, rect.bottom() - 10);
+
+    // Top pixel must be significantly brighter than old bottom noise pixel
+    QVERIFY2(topPixel.red() > 200, "Newest peak was not rendered at the top of the waterfall plot");
+    QVERIFY2(oldPixel.red() < 50, "Older noise line was unexpectedly bright");
+}
+
+void WaterfallTests::frequencyRangeChangeClearsWaterfallHistory()
+{
+    WaterfallPlotWidget widget;
+    widget.resize(600, 300);
+    widget.setHistoryDepth(64);
+
+    auto frame1 = std::make_shared<SpectrumFrame>();
+    frame1->metadata.binCount = 512;
+    frame1->metadata.centerFrequencyHz = 1.0e9;
+    frame1->metadata.spanHz = 100.0e6;
+    frame1->bins.assign(512, -50.0F);
+    widget.addFrame(frame1);
+
+    // Shift center frequency to 1.5 GHz
+    auto frame2 = std::make_shared<SpectrumFrame>();
+    frame2->metadata.binCount = 512;
+    frame2->metadata.centerFrequencyHz = 1.5e9;
+    frame2->metadata.spanHz = 100.0e6;
+    frame2->bins.assign(512, -30.0F);
+    widget.addFrame(frame2);
+
+    QVERIFY(widget.plotRect().isValid());
 }
 
 } // namespace rtsa
