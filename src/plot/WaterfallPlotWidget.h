@@ -71,7 +71,7 @@ private:
     std::uint64_t totalFramesAdded_ = 0;
     float referenceLevel_ = 0.0F;
     float bottomLevel_ = -140.0F;
-    ColormapPreset colormapPreset_ = ColormapPreset::Turbo;
+    ColormapPreset colormapPreset_ = ColormapPreset::ClassicRainbow;
     QVector<QRgb> colorTable_;
     std::vector<float> columnMaxAmplitudes_;
 

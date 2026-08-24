@@ -21,7 +21,7 @@ namespace rtsa {
 namespace {
 
 constexpr int kLeftMargin = 76;
-constexpr int kRightMargin = 20;
+constexpr int kRightMargin = 72;
 constexpr int kTopMargin = 14;
 constexpr int kBottomMargin = 42;
 
@@ -181,7 +181,54 @@ void WaterfallPlotWidget::paintEvent(QPaintEvent*)
     // 3. Draw Grid, Axes and Labels
     drawGridAndAxes(painter);
 
+    // 4. Draw Color Bar Legend
+    drawColorBar(painter);
+
     lastPaintMilliseconds_ = static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
+}
+
+void WaterfallPlotWidget::drawColorBar(QPainter& painter)
+{
+    if (plotRect_.width() <= 0 || plotRect_.height() <= 0 || colorTable_.isEmpty()) {
+        return;
+    }
+
+    const int barX = plotRect_.right() + 10;
+    const int barY = plotRect_.top();
+    const int barW = 12;
+    const int barH = plotRect_.height();
+
+    // Vertical Color Bar (top is 255 = ref, bottom is 0 = bottom)
+    QImage barImage(1, 256, QImage::Format_Indexed8);
+    barImage.setColorTable(colorTable_);
+    for (int i = 0; i < 256; ++i) {
+        barImage.setPixel(0, 255 - i, i);
+    }
+    painter.drawImage(QRect(barX, barY, barW, barH), barImage);
+
+    // Border
+    const QColor frameColor = lightTheme_ ? QColor(190, 198, 208) : QColor(48, 58, 72);
+    const QColor textColor = lightTheme_ ? QColor(70, 80, 95) : QColor(160, 175, 195);
+    painter.setPen(QPen(frameColor, 1));
+    painter.drawRect(barX, barY, barW, barH);
+
+    // Text Labels
+    painter.setPen(textColor);
+    QFont font = painter.font();
+    font.setPointSize(7);
+    painter.setFont(font);
+    const QFontMetrics metrics(font);
+
+    const QString topText = QStringLiteral("%1").arg(std::round(referenceLevel_));
+    const QString midText = QStringLiteral("%1").arg(std::round((referenceLevel_ + bottomLevel_) * 0.5F));
+    const QString botText = QStringLiteral("%1").arg(std::round(bottomLevel_));
+
+    painter.drawText(barX + barW + 4, barY + metrics.ascent(), topText);
+    painter.drawText(barX + barW + 4, barY + barH / 2 + metrics.ascent() / 2, midText);
+    painter.drawText(barX + barW + 4, barY + barH, botText);
+
+    const QString unitText = QStringLiteral("dBFS");
+    painter.drawText(barX - 2, barY - 3, unitText);
 }
 
 void WaterfallPlotWidget::drawWaterfallImage(QPainter& painter)

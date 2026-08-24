@@ -942,11 +942,11 @@ QWidget* MainWindow::buildWaterfallGroup()
 
     waterfallColormapCombo_ = new QComboBox(group);
     waterfallColormapCombo_->setObjectName(QStringLiteral("waterfallColormap"));
-    waterfallColormapCombo_->addItem(tr("Turbo (推荐)"), static_cast<int>(ColormapPreset::Turbo));
-    waterfallColormapCombo_->addItem(tr("Viridis"), static_cast<int>(ColormapPreset::Viridis));
-    waterfallColormapCombo_->addItem(tr("Jet (彩虹)"), static_cast<int>(ColormapPreset::Jet));
-    waterfallColormapCombo_->addItem(tr("Hot (热力)"), static_cast<int>(ColormapPreset::Hot));
-    waterfallColormapCombo_->addItem(tr("灰度"), static_cast<int>(ColormapPreset::Grayscale));
+    waterfallColormapCombo_->addItem(tr("工业标准彩虹 (Keysight/DPX)"), static_cast<int>(ColormapPreset::ClassicRainbow));
+    waterfallColormapCombo_->addItem(tr("高对比深海 (R&S)"), static_cast<int>(ColormapPreset::RohdeSchwarz));
+    waterfallColormapCombo_->addItem(tr("铁红热力 (Ironbow)"), static_cast<int>(ColormapPreset::Ironbow));
+    waterfallColormapCombo_->addItem(tr("深海冰蓝 (Deep Ocean)"), static_cast<int>(ColormapPreset::DeepOcean));
+    waterfallColormapCombo_->addItem(tr("单通道灰度 (Grayscale)"), static_cast<int>(ColormapPreset::Grayscale));
 
     waterfallHistorySpin_ = new QSpinBox(group);
     waterfallHistorySpin_->setObjectName(QStringLiteral("waterfallHistoryDepth"));

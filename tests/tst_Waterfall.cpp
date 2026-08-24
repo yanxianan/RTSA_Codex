@@ -25,10 +25,10 @@ private slots:
 void WaterfallTests::colormapTableGeneratesValidEntries()
 {
     for (const ColormapPreset preset : {
-             ColormapPreset::Turbo,
-             ColormapPreset::Viridis,
-             ColormapPreset::Jet,
-             ColormapPreset::Hot,
+             ColormapPreset::ClassicRainbow,
+             ColormapPreset::RohdeSchwarz,
+             ColormapPreset::Ironbow,
+             ColormapPreset::DeepOcean,
              ColormapPreset::Grayscale }) {
         const QVector<QRgb> table = Colormap::createColorTable(preset);
         QCOMPARE(table.size(), 256);

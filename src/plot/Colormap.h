@@ -9,10 +9,10 @@
 namespace rtsa {
 
 enum class ColormapPreset : std::uint8_t {
-    Turbo = 0,
-    Viridis = 1,
-    Jet = 2,
-    Hot = 3,
+    ClassicRainbow = 0, // Keysight / Tektronix DPX Standard RF Rainbow
+    RohdeSchwarz = 1,   // Rohde & Schwarz FSW High-Contrast Marine
+    Ironbow = 2,        // FLIR / Signal Hound Thermal Ironbow
+    DeepOcean = 3,      // SDR# / Deep Sea Ice Blue
     Grayscale = 4
 };
 

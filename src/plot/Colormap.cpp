@@ -2,66 +2,97 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace rtsa {
 namespace {
 
-QRgb turboColor(float x)
-{
-    x = std::clamp(x, 0.0F, 1.0F);
-    // Google Turbo colormap 4th-order polynomial approximation
-    const float r = 0.13572138F + x * (4.61539260F + x * (-42.66032258F + x * (132.13108234F + x * (-152.94239396F + x * 59.28637943F))));
-    const float g = 0.09140261F + x * (2.19418839F + x * (4.84296658F + x * (-14.18503333F + x * (4.27729857F + x * 2.82956604F))));
-    const float b = 0.10667330F + x * (12.64194608F + x * (-60.58204836F + x * (110.36276771F + x * (-89.90310912F + x * 27.34824973F))));
+struct ColorStop {
+    float pos;
+    QRgb color;
+};
 
-    const int ir = std::clamp(static_cast<int>(std::round(r * 255.0F)), 0, 255);
-    const int ig = std::clamp(static_cast<int>(std::round(g * 255.0F)), 0, 255);
-    const int ib = std::clamp(static_cast<int>(std::round(b * 255.0F)), 0, 255);
-    return qRgb(ir, ig, ib);
+QRgb interpolateStops(float x, const std::vector<ColorStop>& stops)
+{
+    if (stops.empty()) {
+        return qRgb(0, 0, 0);
+    }
+    x = std::clamp(x, 0.0F, 1.0F);
+    if (x <= stops.front().pos) {
+        return stops.front().color;
+    }
+    if (x >= stops.back().pos) {
+        return stops.back().color;
+    }
+
+    for (std::size_t i = 0; i + 1 < stops.size(); ++i) {
+        if (x >= stops[i].pos && x <= stops[i + 1].pos) {
+            const float t = (x - stops[i].pos) / (stops[i + 1].pos - stops[i].pos);
+            const int r = static_cast<int>(std::round(qRed(stops[i].color) + t * (qRed(stops[i + 1].color) - qRed(stops[i].color))));
+            const int g = static_cast<int>(std::round(qGreen(stops[i].color) + t * (qGreen(stops[i + 1].color) - qGreen(stops[i].color))));
+            const int b = static_cast<int>(std::round(qBlue(stops[i].color) + t * (qBlue(stops[i + 1].color) - qBlue(stops[i].color))));
+            return qRgb(std::clamp(r, 0, 255), std::clamp(g, 0, 255), std::clamp(b, 0, 255));
+        }
+    }
+    return stops.back().color;
 }
 
-QRgb viridisColor(float x)
+// 1. Keysight / Tektronix DPX Standard RF Rainbow
+const std::vector<ColorStop>& classicRainbowStops()
 {
-    x = std::clamp(x, 0.0F, 1.0F);
-    // Viridis piecewise polynomial approximation
-    const float r = std::clamp(0.267F + x * (-0.015F + x * (0.835F + x * (-0.087F))), 0.0F, 1.0F);
-    const float g = std::clamp(0.004F + x * (1.100F + x * (-0.350F + x * 0.246F)), 0.0F, 1.0F);
-    const float b = std::clamp(0.329F + x * (0.750F + x * (-1.550F + x * 0.471F)), 0.0F, 1.0F);
-
-    const int ir = std::clamp(static_cast<int>(std::round(r * 255.0F)), 0, 255);
-    const int ig = std::clamp(static_cast<int>(std::round(g * 255.0F)), 0, 255);
-    const int ib = std::clamp(static_cast<int>(std::round(b * 255.0F)), 0, 255);
-    return qRgb(ir, ig, ib);
+    static const std::vector<ColorStop> stops = {
+        { 0.00F, qRgb(4, 7, 20) },      // Deep midnight navy (Noise Floor)
+        { 0.12F, qRgb(0, 26, 102) },    // Navy Blue
+        { 0.28F, qRgb(0, 85, 255) },    // Royal Blue
+        { 0.42F, qRgb(0, 212, 255) },   // Bright Cyan (Weak signal pop-out)
+        { 0.58F, qRgb(0, 230, 0) },     // Bright Green
+        { 0.72F, qRgb(255, 238, 0) },   // Vibrant Yellow
+        { 0.86F, qRgb(238, 17, 0) },    // Vivid Crimson Red
+        { 0.96F, qRgb(255, 0, 170) },   // Magenta
+        { 1.00F, qRgb(255, 255, 255) }  // Hot White (Saturation)
+    };
+    return stops;
 }
 
-QRgb jetColor(float x)
+// 2. Rohde & Schwarz FSW High-Contrast Marine
+const std::vector<ColorStop>& rohdeSchwarzStops()
 {
-    x = std::clamp(x, 0.0F, 1.0F);
-    const float r = std::clamp(1.5F - std::abs(4.0F * x - 3.0F), 0.0F, 1.0F);
-    const float g = std::clamp(1.5F - std::abs(4.0F * x - 2.0F), 0.0F, 1.0F);
-    const float b = std::clamp(1.5F - std::abs(4.0F * x - 1.0F), 0.0F, 1.0F);
-
-    return qRgb(static_cast<int>(r * 255.0F),
-                static_cast<int>(g * 255.0F),
-                static_cast<int>(b * 255.0F));
+    static const std::vector<ColorStop> stops = {
+        { 0.00F, qRgb(0, 8, 28) },      // Deep dark marine
+        { 0.20F, qRgb(0, 56, 168) },    // Ocean Blue
+        { 0.40F, qRgb(0, 200, 150) },   // Mint Cyan-Green
+        { 0.65F, qRgb(255, 208, 0) },   // Golden Yellow
+        { 0.85F, qRgb(255, 56, 0) },    // Fiery Orange-Red
+        { 1.00F, qRgb(255, 255, 255) }  // Pure White
+    };
+    return stops;
 }
 
-QRgb hotColor(float x)
+// 3. FLIR / Signal Hound Thermal Ironbow
+const std::vector<ColorStop>& ironbowStops()
 {
-    x = std::clamp(x, 0.0F, 1.0F);
-    const float r = std::clamp(x * (8.0F / 3.0F), 0.0F, 1.0F);
-    const float g = std::clamp(x * (8.0F / 3.0F) - 1.0F, 0.0F, 1.0F);
-    const float b = std::clamp(x * 4.0F - 3.0F, 0.0F, 1.0F);
-
-    return qRgb(static_cast<int>(r * 255.0F),
-                static_cast<int>(g * 255.0F),
-                static_cast<int>(b * 255.0F));
+    static const std::vector<ColorStop> stops = {
+        { 0.00F, qRgb(0, 0, 0) },       // Pure Black
+        { 0.20F, qRgb(56, 0, 104) },    // Deep Purple-Violet
+        { 0.40F, qRgb(156, 16, 56) },   // Rust Red
+        { 0.65F, qRgb(255, 108, 0) },   // Fire Orange
+        { 0.85F, qRgb(255, 230, 0) },   // Bright Yellow
+        { 1.00F, qRgb(255, 255, 255) }  // White Hot
+    };
+    return stops;
 }
 
-QRgb grayscaleColor(float x)
+// 4. SDR# / Deep Sea Ice Blue
+const std::vector<ColorStop>& deepOceanStops()
 {
-    const int v = std::clamp(static_cast<int>(std::round(x * 255.0F)), 0, 255);
-    return qRgb(v, v, v);
+    static const std::vector<ColorStop> stops = {
+        { 0.00F, qRgb(2, 5, 14) },      // Midnight
+        { 0.25F, qRgb(16, 37, 84) },    // Deep Indigo
+        { 0.50F, qRgb(26, 100, 184) },  // Sea Blue
+        { 0.75F, qRgb(0, 212, 255) },   // Ice Cyan
+        { 1.00F, qRgb(255, 255, 255) }  // Pure White
+    };
+    return stops;
 }
 
 } // namespace
@@ -72,21 +103,23 @@ QVector<QRgb> Colormap::createColorTable(const ColormapPreset preset)
     for (int i = 0; i < 256; ++i) {
         const float x = static_cast<float>(i) / 255.0F;
         switch (preset) {
-        case ColormapPreset::Viridis:
-            table[i] = viridisColor(x);
+        case ColormapPreset::RohdeSchwarz:
+            table[i] = interpolateStops(x, rohdeSchwarzStops());
             break;
-        case ColormapPreset::Jet:
-            table[i] = jetColor(x);
+        case ColormapPreset::Ironbow:
+            table[i] = interpolateStops(x, ironbowStops());
             break;
-        case ColormapPreset::Hot:
-            table[i] = hotColor(x);
+        case ColormapPreset::DeepOcean:
+            table[i] = interpolateStops(x, deepOceanStops());
             break;
-        case ColormapPreset::Grayscale:
-            table[i] = grayscaleColor(x);
+        case ColormapPreset::Grayscale: {
+            const int v = std::clamp(static_cast<int>(std::round(x * 255.0F)), 0, 255);
+            table[i] = qRgb(v, v, v);
             break;
-        case ColormapPreset::Turbo:
+        }
+        case ColormapPreset::ClassicRainbow:
         default:
-            table[i] = turboColor(x);
+            table[i] = interpolateStops(x, classicRainbowStops());
             break;
         }
     }
