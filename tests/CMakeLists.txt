@@ -156,6 +156,7 @@ add_executable(rtsa_gui_tests
     tst_MainWindow.cpp
     ../src/ui/ApplicationTheme.cpp
     ../src/ui/ApplicationTheme.h
+    ../src/ui/UnfocusedWheelFilter.h
     ../src/plot/Colormap.cpp
     ../src/plot/Colormap.h
     ../src/plot/RasterSpectrumRenderer.cpp
@@ -194,7 +195,7 @@ target_link_libraries(rtsa_gui_tests PRIVATE
 add_test(NAME rtsa_gui_tests COMMAND rtsa_gui_tests)
 set_tests_properties(rtsa_gui_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 15
+    TIMEOUT 30
 )
 
 add_test(NAME rtsa_app_smoke

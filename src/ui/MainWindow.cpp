@@ -7,6 +7,7 @@
 #include "services/ConfigurationStore.h"
 #include "services/SpectrumExporter.h"
 #include "sources/SimulationScenarioWriter.h"
+#include "ui/UnfocusedWheelFilter.h"
 
 #include <QCloseEvent>
 #include <QCheckBox>
@@ -792,6 +793,9 @@ QWidget* MainWindow::buildControlPanel()
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scrollArea->setFixedWidth(330);
     scrollArea->setWidget(panel);
+
+    UnfocusedWheelFilter::installRecursively(panel);
+
     return scrollArea;
 }
 
@@ -829,6 +833,7 @@ QWidget* MainWindow::buildSourceGroup()
     stopFrequencySpin_->setSuffix(tr(" MHz"));
 
     fftSizeCombo_ = new QComboBox(group);
+    fftSizeCombo_->setObjectName(QStringLiteral("fftSize"));
     for (const int size : { 1024, 2048, 4096, 8192, 16384, 32768, 65536 }) {
         fftSizeCombo_->addItem(QString::number(size), size);
     }
@@ -842,6 +847,7 @@ QWidget* MainWindow::buildSourceGroup()
     sourceFrameRateSpin_->setSuffix(tr(" 帧/s"));
 
     noiseFloorSpin_ = new QDoubleSpinBox(group);
+    noiseFloorSpin_->setObjectName(QStringLiteral("noiseFloorDbfs"));
     noiseFloorSpin_->setRange(-180.0, -10.0);
     noiseFloorSpin_->setValue(-110.0);
     noiseFloorSpin_->setSuffix(tr(" dBFS"));

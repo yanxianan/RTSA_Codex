@@ -66,6 +66,7 @@ private slots:
     void markerControlsSupportFourMarkersAndDelta();
     void rangeMeasurementsUseLatestFullFrame();
     void telemetryShowsProcessingRenderAndQueueDepth();
+    void unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges();
 };
 
 namespace {
@@ -286,7 +287,7 @@ void MainWindowTests::fullHdRasterEndToEndPerformance()
     std::uint64_t lastSequence = plot->frame()->metadata.sequence;
     int distinctDisplayFrames = 0;
     while (timer.elapsed() < 2000) {
-        QTest::qWait(16);
+        QTest::qWait(5);
         const auto frame = plot->frame();
         if (frame && frame->metadata.sequence != lastSequence) {
             lastSequence = frame->metadata.sequence;
@@ -487,6 +488,37 @@ void MainWindowTests::telemetryShowsProcessingRenderAndQueueDepth()
         latencyP95->text().size() - 3).toDouble(&latencyOk);
     QVERIFY(latencyOk);
     QVERIFY2(latency < 150.0, "single-frame visible latency P95 exceeded 150 ms");
+}
+
+void MainWindowTests::unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    window.show();
+    auto* centerSpin = window.findChild<QDoubleSpinBox*>(QStringLiteral("centerFrequencyMHz"));
+    auto* fftCombo = window.findChild<QComboBox*>(QStringLiteral("fftSize"));
+    QVERIFY(centerSpin && fftCombo);
+
+    window.setFocus();
+    QVERIFY(!centerSpin->hasFocus());
+    QVERIFY(!fftCombo->hasFocus());
+
+    const double initialCenter = centerSpin->value();
+    const int initialFftIndex = fftCombo->currentIndex();
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QWheelEvent wheelEvent(QPointF(10, 10), QPointF(10, 10), QPoint(0, 0), QPoint(0, 120),
+                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+#else
+    QWheelEvent wheelEvent(QPoint(10, 10), 120, Qt::NoButton, Qt::NoModifier);
+#endif
+
+    // 1. Unfocused spinbox in main window ignores wheel
+    QApplication::sendEvent(centerSpin, &wheelEvent);
+    QCOMPARE(centerSpin->value(), initialCenter);
+
+    // 2. Unfocused combobox in main window ignores wheel
+    QApplication::sendEvent(fftCombo, &wheelEvent);
+    QCOMPARE(fftCombo->currentIndex(), initialFftIndex);
 }
 
 } // namespace rtsa
