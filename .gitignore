@@ -2,5 +2,10 @@ build/
 .qtcreator/
 *.user
 *.cmake.user
+*.o
+*.obj
+*.exe
+*.a
+*.dll
 .DS_Store
 Thumbs.db
