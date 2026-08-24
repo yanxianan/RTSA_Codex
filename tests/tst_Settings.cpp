@@ -46,11 +46,11 @@ void SettingsTests::validSettingsRoundTrip()
     expected.sourceFrameRate = 500.0;
     expected.unthrottled = true;
     expected.tone1Enabled = false;
-    expected.tone1OffsetMHz = -12.5;
+    expected.tone1FrequencyMHz = 987.5;
     expected.tone1WidthBins = 4.5;
     expected.tone2WidthBins = 6.5;
-    expected.sweepStartOffsetMHz = -30.0;
-    expected.sweepStopOffsetMHz = 25.0;
+    expected.sweepStartFrequencyMHz = 970.0;
+    expected.sweepStopFrequencyMHz = 1025.0;
     expected.sweepPeriodSeconds = 7.5;
     expected.sweepDirection = 2;
     expected.transientDurationSeconds = 1.25;
@@ -70,11 +70,11 @@ void SettingsTests::validSettingsRoundTrip()
     QCOMPARE(loaded.settings.binCount, expected.binCount);
     QCOMPARE(loaded.settings.traceMode, expected.traceMode);
     QCOMPARE(loaded.settings.tone1Enabled, expected.tone1Enabled);
-    QCOMPARE(loaded.settings.tone1OffsetMHz, expected.tone1OffsetMHz);
+    QCOMPARE(loaded.settings.tone1FrequencyMHz, expected.tone1FrequencyMHz);
     QCOMPARE(loaded.settings.tone1WidthBins, expected.tone1WidthBins);
     QCOMPARE(loaded.settings.tone2WidthBins, expected.tone2WidthBins);
-    QCOMPARE(loaded.settings.sweepStartOffsetMHz, expected.sweepStartOffsetMHz);
-    QCOMPARE(loaded.settings.sweepStopOffsetMHz, expected.sweepStopOffsetMHz);
+    QCOMPARE(loaded.settings.sweepStartFrequencyMHz, expected.sweepStartFrequencyMHz);
+    QCOMPARE(loaded.settings.sweepStopFrequencyMHz, expected.sweepStopFrequencyMHz);
     QCOMPARE(loaded.settings.unthrottled, expected.unthrottled);
     QCOMPARE(loaded.settings.sweepPeriodSeconds, expected.sweepPeriodSeconds);
     QCOMPARE(loaded.settings.sweepDirection, expected.sweepDirection);
@@ -153,7 +153,7 @@ void SettingsTests::versionOneSettingsAreMigrated()
     QCOMPARE(result.settings.sweepDirection, 0);
     QCOMPARE(result.settings.transientDurationSeconds, 0.1);
     QCOMPARE(result.settings.tone1WidthBins, 1.5);
-    QCOMPARE(result.settings.sweepStartOffsetMHz, -70.0);
+    QCOMPARE(result.settings.sweepStartFrequencyMHz, 930.0);
 }
 
 void SettingsTests::versionTwoSettingsAreMigrated()
@@ -176,7 +176,7 @@ void SettingsTests::versionTwoSettingsAreMigrated()
     QCOMPARE(result.settings.transientDurationSeconds, 0.75);
     QCOMPARE(result.settings.unthrottled, false);
     QCOMPARE(result.settings.tone2WidthBins, 2.5);
-    QCOMPARE(result.settings.sweepStopOffsetMHz, 70.0);
+    QCOMPARE(result.settings.sweepStopFrequencyMHz, 1070.0);
 }
 
 void SettingsTests::versionThreeSettingsAreMigrated()

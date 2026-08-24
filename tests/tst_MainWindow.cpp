@@ -317,15 +317,15 @@ void MainWindowTests::simulatorControlsUpdateInjectedSource()
     auto* sourceObserver = source.get();
     MainWindow window(std::move(source), nullptr, false);
     auto* enabled = window.findChild<QCheckBox*>(QStringLiteral("tone1Enabled"));
-    auto* offset = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1OffsetMHz"));
+    auto* frequency = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1FrequencyMHz"));
     auto* amplitude = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1AmplitudeDbfs"));
     auto* sweepDirection = window.findChild<QComboBox*>(QStringLiteral("sweepDirection"));
     auto* transientDuration = window.findChild<QDoubleSpinBox*>(
         QStringLiteral("transientDurationSeconds"));
-    QVERIFY(enabled && offset && amplitude && sweepDirection && transientDuration);
+    QVERIFY(enabled && frequency && amplitude && sweepDirection && transientDuration);
 
     enabled->setChecked(false);
-    offset->setValue(-12.5);
+    frequency->setValue(987.5);
     amplitude->setValue(-44.0);
     sweepDirection->setCurrentIndex(sweepDirection->findData(
         static_cast<int>(SweepDirection::Down)));
@@ -334,7 +334,7 @@ void MainWindowTests::simulatorControlsUpdateInjectedSource()
     const SimulationConfig config = sourceObserver->configuration();
     QCOMPARE(config.tones.size(), std::size_t(2));
     QVERIFY(!config.tones[0].enabled);
-    QCOMPARE(config.tones[0].frequencyHz, config.centerFrequencyHz - 12.5e6);
+    QCOMPARE(config.tones[0].frequencyHz, 987.5e6);
     QCOMPARE(config.tones[0].amplitudeDbfs, -44.0F);
     QCOMPARE(static_cast<int>(config.sweepDirection),
              static_cast<int>(SweepDirection::Down));
@@ -387,7 +387,7 @@ void MainWindowTests::initialScenarioPopulatesControlsAndSource()
     auto* unthrottled = window.findChild<QCheckBox*>(QStringLiteral("unthrottled"));
     auto* frameRate = window.findChild<QDoubleSpinBox*>(QStringLiteral("sourceFrameRate"));
     auto* sweepStart = window.findChild<QDoubleSpinBox*>(
-        QStringLiteral("sweepStartOffsetMHz"));
+        QStringLiteral("sweepStartFrequencyMHz"));
     auto* toneWidth = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1WidthBins"));
     QVERIFY(unthrottled && sweepStart && toneWidth);
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("saveScenarioButton")));
@@ -395,7 +395,7 @@ void MainWindowTests::initialScenarioPopulatesControlsAndSource()
     if (frameRate) {
         QVERIFY(!frameRate->isEnabled());
     }
-    QCOMPARE(sweepStart->value(), -30.0);
+    QCOMPARE(sweepStart->value(), 2370.0);
     QCOMPARE(toneWidth->value(), 4.5);
 }
 
@@ -405,13 +405,13 @@ void MainWindowTests::invalidSweepOffsetsAreCorrected()
     auto* sourceObserver = source.get();
     MainWindow window(std::move(source), nullptr, false);
     auto* sweepStart = window.findChild<QDoubleSpinBox*>(
-        QStringLiteral("sweepStartOffsetMHz"));
+        QStringLiteral("sweepStartFrequencyMHz"));
     auto* sweepStop = window.findChild<QDoubleSpinBox*>(
-        QStringLiteral("sweepStopOffsetMHz"));
+        QStringLiteral("sweepStopFrequencyMHz"));
     QVERIFY(sweepStart && sweepStop);
 
-    sweepStart->setValue(25.0);
-    sweepStop->setValue(10.0);
+    sweepStart->setValue(1050.0);
+    sweepStop->setValue(950.0);
     QVERIFY(QMetaObject::invokeMethod(&window,
                                       "applyNonFrequencySourceConfiguration"));
     QVERIFY(sweepStop->value() > sweepStart->value());

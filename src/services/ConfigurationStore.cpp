@@ -102,23 +102,23 @@ bool AppSettings::isValid() const noexcept
         && noiseFloorDbfs >= -180.0 && noiseFloorDbfs <= -10.0
         && std::isfinite(noiseDeviationDb)
         && noiseDeviationDb >= 0.0 && noiseDeviationDb <= 30.0
-        && std::isfinite(tone1OffsetMHz)
-        && tone1OffsetMHz >= -5000.0 && tone1OffsetMHz <= 5000.0
+        && std::isfinite(tone1FrequencyMHz)
+        && tone1FrequencyMHz >= 0.0 && tone1FrequencyMHz <= 25000.0
         && std::isfinite(tone1AmplitudeDbfs)
         && tone1AmplitudeDbfs >= -180.0 && tone1AmplitudeDbfs <= 0.0
         && std::isfinite(tone1WidthBins)
         && tone1WidthBins >= 0.1 && tone1WidthBins <= 1024.0
-        && std::isfinite(tone2OffsetMHz)
-        && tone2OffsetMHz >= -5000.0 && tone2OffsetMHz <= 5000.0
+        && std::isfinite(tone2FrequencyMHz)
+        && tone2FrequencyMHz >= 0.0 && tone2FrequencyMHz <= 25000.0
         && std::isfinite(tone2AmplitudeDbfs)
         && tone2AmplitudeDbfs >= -180.0 && tone2AmplitudeDbfs <= 0.0
         && std::isfinite(tone2WidthBins)
         && tone2WidthBins >= 0.1 && tone2WidthBins <= 1024.0
-        && std::isfinite(sweepStartOffsetMHz)
-        && sweepStartOffsetMHz >= -5000.0 && sweepStartOffsetMHz <= 5000.0
-        && std::isfinite(sweepStopOffsetMHz)
-        && sweepStopOffsetMHz >= -5000.0 && sweepStopOffsetMHz <= 5000.0
-        && sweepStartOffsetMHz < sweepStopOffsetMHz
+        && std::isfinite(sweepStartFrequencyMHz)
+        && sweepStartFrequencyMHz >= 0.0 && sweepStartFrequencyMHz <= 25000.0
+        && std::isfinite(sweepStopFrequencyMHz)
+        && sweepStopFrequencyMHz >= 0.0 && sweepStopFrequencyMHz <= 25000.0
+        && sweepStartFrequencyMHz < sweepStopFrequencyMHz
         && sweepDirection >= 0 && sweepDirection <= 2
         && std::isfinite(sweepPeriodSeconds)
         && sweepPeriodSeconds >= 0.1 && sweepPeriodSeconds <= 3600.0
@@ -190,26 +190,26 @@ SettingsLoadResult ConfigurationStore::load(QSettings& storage)
                       defaults.noiseDeviationDb, candidate.noiseDeviationDb)
         && readBool(storage, QStringLiteral("tone1Enabled"),
                     defaults.tone1Enabled, candidate.tone1Enabled)
-        && readDouble(storage, QStringLiteral("tone1OffsetMHz"),
-                      defaults.tone1OffsetMHz, candidate.tone1OffsetMHz)
+        && readDouble(storage, QStringLiteral("tone1FrequencyMHz"),
+                      defaults.tone1FrequencyMHz, candidate.tone1FrequencyMHz)
         && readDouble(storage, QStringLiteral("tone1AmplitudeDbfs"),
                       defaults.tone1AmplitudeDbfs, candidate.tone1AmplitudeDbfs)
         && readDouble(storage, QStringLiteral("tone1WidthBins"),
                       defaults.tone1WidthBins, candidate.tone1WidthBins)
         && readBool(storage, QStringLiteral("tone2Enabled"),
                     defaults.tone2Enabled, candidate.tone2Enabled)
-        && readDouble(storage, QStringLiteral("tone2OffsetMHz"),
-                      defaults.tone2OffsetMHz, candidate.tone2OffsetMHz)
+        && readDouble(storage, QStringLiteral("tone2FrequencyMHz"),
+                      defaults.tone2FrequencyMHz, candidate.tone2FrequencyMHz)
         && readDouble(storage, QStringLiteral("tone2AmplitudeDbfs"),
                       defaults.tone2AmplitudeDbfs, candidate.tone2AmplitudeDbfs)
         && readDouble(storage, QStringLiteral("tone2WidthBins"),
                       defaults.tone2WidthBins, candidate.tone2WidthBins)
         && readBool(storage, QStringLiteral("sweepEnabled"),
                     defaults.sweepEnabled, candidate.sweepEnabled)
-        && readDouble(storage, QStringLiteral("sweepStartOffsetMHz"),
-                      defaults.sweepStartOffsetMHz, candidate.sweepStartOffsetMHz)
-        && readDouble(storage, QStringLiteral("sweepStopOffsetMHz"),
-                      defaults.sweepStopOffsetMHz, candidate.sweepStopOffsetMHz)
+        && readDouble(storage, QStringLiteral("sweepStartFrequencyMHz"),
+                      defaults.sweepStartFrequencyMHz, candidate.sweepStartFrequencyMHz)
+        && readDouble(storage, QStringLiteral("sweepStopFrequencyMHz"),
+                      defaults.sweepStopFrequencyMHz, candidate.sweepStopFrequencyMHz)
         && readInt(storage, QStringLiteral("sweepDirection"),
                    defaults.sweepDirection, candidate.sweepDirection)
         && readDouble(storage, QStringLiteral("sweepPeriodSeconds"),
@@ -264,9 +264,6 @@ SettingsSaveResult ConfigurationStore::save(QSettings& storage,
         return SettingsSaveResult { false, QStringLiteral("拒绝保存无效配置。") };
     }
 
-    // Qt 5.15 implements atomic QSettings sync with a temporary file and
-    // replacement. Keep it mandatory so an unsuitable target directory
-    // reports AccessError instead of silently falling back to an in-place write.
     storage.setAtomicSyncRequired(true);
     storage.setValue(QStringLiteral("schemaVersion"), AppSettings::schemaVersion);
     storage.beginGroup(QStringLiteral("MainWindow"));
@@ -282,16 +279,16 @@ SettingsSaveResult ConfigurationStore::save(QSettings& storage,
     storage.setValue(QStringLiteral("noiseFloorDbfs"), settings.noiseFloorDbfs);
     storage.setValue(QStringLiteral("noiseDeviationDb"), settings.noiseDeviationDb);
     storage.setValue(QStringLiteral("tone1Enabled"), settings.tone1Enabled);
-    storage.setValue(QStringLiteral("tone1OffsetMHz"), settings.tone1OffsetMHz);
+    storage.setValue(QStringLiteral("tone1FrequencyMHz"), settings.tone1FrequencyMHz);
     storage.setValue(QStringLiteral("tone1AmplitudeDbfs"), settings.tone1AmplitudeDbfs);
     storage.setValue(QStringLiteral("tone1WidthBins"), settings.tone1WidthBins);
     storage.setValue(QStringLiteral("tone2Enabled"), settings.tone2Enabled);
-    storage.setValue(QStringLiteral("tone2OffsetMHz"), settings.tone2OffsetMHz);
+    storage.setValue(QStringLiteral("tone2FrequencyMHz"), settings.tone2FrequencyMHz);
     storage.setValue(QStringLiteral("tone2AmplitudeDbfs"), settings.tone2AmplitudeDbfs);
     storage.setValue(QStringLiteral("tone2WidthBins"), settings.tone2WidthBins);
     storage.setValue(QStringLiteral("sweepEnabled"), settings.sweepEnabled);
-    storage.setValue(QStringLiteral("sweepStartOffsetMHz"), settings.sweepStartOffsetMHz);
-    storage.setValue(QStringLiteral("sweepStopOffsetMHz"), settings.sweepStopOffsetMHz);
+    storage.setValue(QStringLiteral("sweepStartFrequencyMHz"), settings.sweepStartFrequencyMHz);
+    storage.setValue(QStringLiteral("sweepStopFrequencyMHz"), settings.sweepStopFrequencyMHz);
     storage.setValue(QStringLiteral("sweepDirection"), settings.sweepDirection);
     storage.setValue(QStringLiteral("sweepPeriodSeconds"), settings.sweepPeriodSeconds);
     storage.setValue(QStringLiteral("sweepAmplitudeDbfs"), settings.sweepAmplitudeDbfs);

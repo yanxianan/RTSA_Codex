@@ -307,9 +307,9 @@ void MainWindow::applySourceConfiguration()
 void MainWindow::applyNonFrequencySourceConfiguration()
 {
     if (simulationControl_
-        && sweepStartOffsetSpin_->value() >= sweepStopOffsetSpin_->value()) {
-        const QSignalBlocker blocker(sweepStopOffsetSpin_);
-        sweepStopOffsetSpin_->setValue(sweepStartOffsetSpin_->value() + 0.001);
+        && sweepStartFrequencySpin_->value() >= sweepStopFrequencySpin_->value()) {
+        const QSignalBlocker blocker(sweepStopFrequencySpin_);
+        sweepStopFrequencySpin_->setValue(sweepStartFrequencySpin_->value() + 0.001);
     }
     configureSourceFromUi();
 }
@@ -885,12 +885,12 @@ QWidget* MainWindow::buildSimulationGroup()
     tone1EnabledCheck_ = new QCheckBox(tr("启用"), group);
     tone1EnabledCheck_->setObjectName(QStringLiteral("tone1Enabled"));
     tone1EnabledCheck_->setChecked(true);
-    tone1OffsetSpin_ = new QDoubleSpinBox(group);
-    tone1OffsetSpin_->setObjectName(QStringLiteral("tone1OffsetMHz"));
-    tone1OffsetSpin_->setRange(-5000.0, 5000.0);
-    tone1OffsetSpin_->setDecimals(6);
-    tone1OffsetSpin_->setValue(-20.0);
-    tone1OffsetSpin_->setSuffix(tr(" MHz"));
+    tone1FrequencySpin_ = new QDoubleSpinBox(group);
+    tone1FrequencySpin_->setObjectName(QStringLiteral("tone1FrequencyMHz"));
+    tone1FrequencySpin_->setRange(0.0, 25000.0);
+    tone1FrequencySpin_->setDecimals(6);
+    tone1FrequencySpin_->setValue(980.0);
+    tone1FrequencySpin_->setSuffix(tr(" MHz"));
     tone1AmplitudeSpin_ = new QDoubleSpinBox(group);
     tone1AmplitudeSpin_->setObjectName(QStringLiteral("tone1AmplitudeDbfs"));
     tone1AmplitudeSpin_->setRange(-180.0, 0.0);
@@ -906,12 +906,12 @@ QWidget* MainWindow::buildSimulationGroup()
     tone2EnabledCheck_ = new QCheckBox(tr("启用"), group);
     tone2EnabledCheck_->setObjectName(QStringLiteral("tone2Enabled"));
     tone2EnabledCheck_->setChecked(true);
-    tone2OffsetSpin_ = new QDoubleSpinBox(group);
-    tone2OffsetSpin_->setObjectName(QStringLiteral("tone2OffsetMHz"));
-    tone2OffsetSpin_->setRange(-5000.0, 5000.0);
-    tone2OffsetSpin_->setDecimals(6);
-    tone2OffsetSpin_->setValue(35.0);
-    tone2OffsetSpin_->setSuffix(tr(" MHz"));
+    tone2FrequencySpin_ = new QDoubleSpinBox(group);
+    tone2FrequencySpin_->setObjectName(QStringLiteral("tone2FrequencyMHz"));
+    tone2FrequencySpin_->setRange(0.0, 25000.0);
+    tone2FrequencySpin_->setDecimals(6);
+    tone2FrequencySpin_->setValue(1035.0);
+    tone2FrequencySpin_->setSuffix(tr(" MHz"));
     tone2AmplitudeSpin_ = new QDoubleSpinBox(group);
     tone2AmplitudeSpin_->setObjectName(QStringLiteral("tone2AmplitudeDbfs"));
     tone2AmplitudeSpin_->setRange(-180.0, 0.0);
@@ -932,18 +932,18 @@ QWidget* MainWindow::buildSimulationGroup()
     sweepDirectionCombo_->addItem(tr("向上"), static_cast<int>(SweepDirection::Up));
     sweepDirectionCombo_->addItem(tr("向下"), static_cast<int>(SweepDirection::Down));
     sweepDirectionCombo_->addItem(tr("往返"), static_cast<int>(SweepDirection::PingPong));
-    sweepStartOffsetSpin_ = new QDoubleSpinBox(group);
-    sweepStartOffsetSpin_->setObjectName(QStringLiteral("sweepStartOffsetMHz"));
-    sweepStartOffsetSpin_->setRange(-5000.0, 4999.999);
-    sweepStartOffsetSpin_->setDecimals(6);
-    sweepStartOffsetSpin_->setValue(-70.0);
-    sweepStartOffsetSpin_->setSuffix(tr(" MHz"));
-    sweepStopOffsetSpin_ = new QDoubleSpinBox(group);
-    sweepStopOffsetSpin_->setObjectName(QStringLiteral("sweepStopOffsetMHz"));
-    sweepStopOffsetSpin_->setRange(-4999.999, 5000.0);
-    sweepStopOffsetSpin_->setDecimals(6);
-    sweepStopOffsetSpin_->setValue(70.0);
-    sweepStopOffsetSpin_->setSuffix(tr(" MHz"));
+    sweepStartFrequencySpin_ = new QDoubleSpinBox(group);
+    sweepStartFrequencySpin_->setObjectName(QStringLiteral("sweepStartFrequencyMHz"));
+    sweepStartFrequencySpin_->setRange(0.0, 24999.999);
+    sweepStartFrequencySpin_->setDecimals(6);
+    sweepStartFrequencySpin_->setValue(930.0);
+    sweepStartFrequencySpin_->setSuffix(tr(" MHz"));
+    sweepStopFrequencySpin_ = new QDoubleSpinBox(group);
+    sweepStopFrequencySpin_->setObjectName(QStringLiteral("sweepStopFrequencyMHz"));
+    sweepStopFrequencySpin_->setRange(0.001, 25000.0);
+    sweepStopFrequencySpin_->setDecimals(6);
+    sweepStopFrequencySpin_->setValue(1070.0);
+    sweepStopFrequencySpin_->setSuffix(tr(" MHz"));
     sweepPeriodSpin_ = new QDoubleSpinBox(group);
     sweepPeriodSpin_->setObjectName(QStringLiteral("sweepPeriodSeconds"));
     sweepPeriodSpin_->setRange(0.1, 3600.0);
@@ -980,17 +980,17 @@ QWidget* MainWindow::buildSimulationGroup()
     form->addRow(tr("无等待压测"), unthrottledCheck_);
     form->addRow(tr("噪声起伏"), noiseDeviationSpin_);
     form->addRow(tr("单音 1"), tone1EnabledCheck_);
-    form->addRow(tr("单音 1 偏移"), tone1OffsetSpin_);
+    form->addRow(tr("单音 1 频率"), tone1FrequencySpin_);
     form->addRow(tr("单音 1 幅度"), tone1AmplitudeSpin_);
     form->addRow(tr("单音 1 带宽"), tone1WidthSpin_);
     form->addRow(tr("单音 2"), tone2EnabledCheck_);
-    form->addRow(tr("单音 2 偏移"), tone2OffsetSpin_);
+    form->addRow(tr("单音 2 频率"), tone2FrequencySpin_);
     form->addRow(tr("单音 2 幅度"), tone2AmplitudeSpin_);
     form->addRow(tr("单音 2 带宽"), tone2WidthSpin_);
     form->addRow(tr("扫频"), sweepEnabledCheck_);
     form->addRow(tr("扫频方向"), sweepDirectionCombo_);
-    form->addRow(tr("扫频起点偏移"), sweepStartOffsetSpin_);
-    form->addRow(tr("扫频终点偏移"), sweepStopOffsetSpin_);
+    form->addRow(tr("扫频起点"), sweepStartFrequencySpin_);
+    form->addRow(tr("扫频终点"), sweepStopFrequencySpin_);
     form->addRow(tr("扫频周期"), sweepPeriodSpin_);
     form->addRow(tr("扫频幅度"), sweepAmplitudeSpin_);
     form->addRow(tr("瞬态概率"), transientProbabilitySpin_);
@@ -1247,11 +1247,11 @@ void MainWindow::connectUi()
     connect(noiseFloorSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     if (simulationControl_) {
-        for (QDoubleSpinBox* spin : { noiseDeviationSpin_, tone1OffsetSpin_,
+        for (QDoubleSpinBox* spin : { noiseDeviationSpin_, tone1FrequencySpin_,
                                      tone1AmplitudeSpin_, tone1WidthSpin_,
-                                     tone2OffsetSpin_, tone2AmplitudeSpin_,
-                                     tone2WidthSpin_, sweepStartOffsetSpin_,
-                                     sweepStopOffsetSpin_, sweepPeriodSpin_,
+                                     tone2FrequencySpin_, tone2AmplitudeSpin_,
+                                     tone2WidthSpin_, sweepStartFrequencySpin_,
+                                     sweepStopFrequencySpin_, sweepPeriodSpin_,
                                      sweepAmplitudeSpin_, transientProbabilitySpin_,
                                      transientAmplitudeSpin_, transientDurationSpin_ }) {
             connect(spin, &QDoubleSpinBox::editingFinished,
@@ -1347,16 +1347,16 @@ void MainWindow::loadSettings()
         sourceFrameRateSpin_->setEnabled(!settings.unthrottled);
         noiseDeviationSpin_->setValue(settings.noiseDeviationDb);
         tone1EnabledCheck_->setChecked(settings.tone1Enabled);
-        tone1OffsetSpin_->setValue(settings.tone1OffsetMHz);
+        tone1FrequencySpin_->setValue(settings.tone1FrequencyMHz);
         tone1AmplitudeSpin_->setValue(settings.tone1AmplitudeDbfs);
         tone1WidthSpin_->setValue(settings.tone1WidthBins);
         tone2EnabledCheck_->setChecked(settings.tone2Enabled);
-        tone2OffsetSpin_->setValue(settings.tone2OffsetMHz);
+        tone2FrequencySpin_->setValue(settings.tone2FrequencyMHz);
         tone2AmplitudeSpin_->setValue(settings.tone2AmplitudeDbfs);
         tone2WidthSpin_->setValue(settings.tone2WidthBins);
         sweepEnabledCheck_->setChecked(settings.sweepEnabled);
-        sweepStartOffsetSpin_->setValue(settings.sweepStartOffsetMHz);
-        sweepStopOffsetSpin_->setValue(settings.sweepStopOffsetMHz);
+        sweepStartFrequencySpin_->setValue(settings.sweepStartFrequencyMHz);
+        sweepStopFrequencySpin_->setValue(settings.sweepStopFrequencyMHz);
         const int sweepDirectionIndex = sweepDirectionCombo_->findData(settings.sweepDirection);
         if (sweepDirectionIndex >= 0) {
             sweepDirectionCombo_->setCurrentIndex(sweepDirectionIndex);
@@ -1405,16 +1405,16 @@ void MainWindow::saveSettings() const
         settings.unthrottled = unthrottledCheck_->isChecked();
         settings.noiseDeviationDb = noiseDeviationSpin_->value();
         settings.tone1Enabled = tone1EnabledCheck_->isChecked();
-        settings.tone1OffsetMHz = tone1OffsetSpin_->value();
+        settings.tone1FrequencyMHz = tone1FrequencySpin_->value();
         settings.tone1AmplitudeDbfs = tone1AmplitudeSpin_->value();
         settings.tone1WidthBins = tone1WidthSpin_->value();
         settings.tone2Enabled = tone2EnabledCheck_->isChecked();
-        settings.tone2OffsetMHz = tone2OffsetSpin_->value();
+        settings.tone2FrequencyMHz = tone2FrequencySpin_->value();
         settings.tone2AmplitudeDbfs = tone2AmplitudeSpin_->value();
         settings.tone2WidthBins = tone2WidthSpin_->value();
         settings.sweepEnabled = sweepEnabledCheck_->isChecked();
-        settings.sweepStartOffsetMHz = sweepStartOffsetSpin_->value();
-        settings.sweepStopOffsetMHz = sweepStopOffsetSpin_->value();
+        settings.sweepStartFrequencyMHz = sweepStartFrequencySpin_->value();
+        settings.sweepStopFrequencyMHz = sweepStopFrequencySpin_->value();
         settings.sweepDirection = sweepDirectionCombo_->currentData().toInt();
         settings.sweepPeriodSeconds = sweepPeriodSpin_->value();
         settings.sweepAmplitudeDbfs = sweepAmplitudeSpin_->value();
@@ -1457,19 +1457,17 @@ void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
     const ToneConfig& tone1 = config.tones.empty() ? emptyTone : config.tones[0];
     const ToneConfig& tone2 = config.tones.size() < 2 ? emptyTone : config.tones[1];
     tone1EnabledCheck_->setChecked(tone1.enabled);
-    tone1OffsetSpin_->setValue((tone1.frequencyHz - config.centerFrequencyHz) / 1.0e6);
+    tone1FrequencySpin_->setValue(tone1.frequencyHz / 1.0e6);
     tone1AmplitudeSpin_->setValue(tone1.amplitudeDbfs);
     tone1WidthSpin_->setValue(tone1.widthBins);
     tone2EnabledCheck_->setChecked(tone2.enabled);
-    tone2OffsetSpin_->setValue((tone2.frequencyHz - config.centerFrequencyHz) / 1.0e6);
+    tone2FrequencySpin_->setValue(tone2.frequencyHz / 1.0e6);
     tone2AmplitudeSpin_->setValue(tone2.amplitudeDbfs);
     tone2WidthSpin_->setValue(tone2.widthBins);
 
     sweepEnabledCheck_->setChecked(config.sweepEnabled);
-    sweepStartOffsetSpin_->setValue(
-        (config.sweepStartHz - config.centerFrequencyHz) / 1.0e6);
-    sweepStopOffsetSpin_->setValue(
-        (config.sweepStopHz - config.centerFrequencyHz) / 1.0e6);
+    sweepStartFrequencySpin_->setValue(config.sweepStartHz / 1.0e6);
+    sweepStopFrequencySpin_->setValue(config.sweepStopHz / 1.0e6);
     const int directionIndex = sweepDirectionCombo_->findData(
         static_cast<int>(config.sweepDirection));
     if (directionIndex >= 0) {
@@ -1520,19 +1518,17 @@ SimulationConfig MainWindow::configurationFromUi() const
     if (simulationControl_) {
         config.tones = {
             ToneConfig { tone1EnabledCheck_->isChecked(),
-                         config.centerFrequencyHz + tone1OffsetSpin_->value() * 1.0e6,
+                         tone1FrequencySpin_->value() * 1.0e6,
                          static_cast<float>(tone1AmplitudeSpin_->value()),
                          static_cast<float>(tone1WidthSpin_->value()) },
             ToneConfig { tone2EnabledCheck_->isChecked(),
-                         config.centerFrequencyHz + tone2OffsetSpin_->value() * 1.0e6,
+                         tone2FrequencySpin_->value() * 1.0e6,
                          static_cast<float>(tone2AmplitudeSpin_->value()),
                          static_cast<float>(tone2WidthSpin_->value()) }
         };
         config.sweepEnabled = sweepEnabledCheck_->isChecked();
-        config.sweepStartHz = config.centerFrequencyHz
-            + sweepStartOffsetSpin_->value() * 1.0e6;
-        config.sweepStopHz = config.centerFrequencyHz
-            + sweepStopOffsetSpin_->value() * 1.0e6;
+        config.sweepStartHz = sweepStartFrequencySpin_->value() * 1.0e6;
+        config.sweepStopHz = sweepStopFrequencySpin_->value() * 1.0e6;
         config.sweepDirection = static_cast<SweepDirection>(
             sweepDirectionCombo_->currentData().toInt());
         config.sweepPeriodSeconds = sweepPeriodSpin_->value();
