@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "name": "Deterministic transport fault injection",
+  "simulation": {
+    "binCount": 4096,
+    "frameRate": 200,
+    "unthrottled": false,
+    "centerFrequencyHz": 1000000000,
+    "spanHz": 200000000,
+    "noiseFloorDbfs": -115,
+    "noiseDeviationDb": 1,
+    "randomSeed": 75309091,
+    "tones": [
+      {
+        "enabled": true,
+        "frequencyHz": 1010000000,
+        "amplitudeDbfs": -20,
+        "widthBins": 2
+      }
+    ],
+    "sweep": {
+      "enabled": false,
+      "startFrequencyHz": 950000000,
+      "stopFrequencyHz": 1050000000,
+      "periodSeconds": 2,
+      "amplitudeDbfs": -40,
+      "direction": "up"
+    },
+    "transient": {
+      "probabilityPerFrame": 0,
+      "amplitudeDbfs": -12,
+      "durationSeconds": 0.1
+    },
+    "faultInjection": {
+      "pauseEveryFrames": 25,
+      "pauseDurationSeconds": 0.15,
+      "sequenceJumpEveryFrames": 10,
+      "sequenceSkipCount": 3,
+      "invalidFrameEveryFrames": 17,
+      "burstEveryFrames": 40,
+      "burstFrameCount": 5
+    }
+  }
+}

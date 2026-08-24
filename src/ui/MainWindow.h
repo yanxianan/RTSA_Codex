@@ -1,0 +1,206 @@
+#pragma once
+
+#include "core/SpectrumPipeline.h"
+#include "sources/ISimulationConfigurable.h"
+#include "sources/ISpectrumSource.h"
+
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+#include <QMainWindow>
+
+#include <cstdint>
+#include <array>
+#include <memory>
+
+class QComboBox;
+class QCheckBox;
+class QCloseEvent;
+class QEvent;
+class QDoubleSpinBox;
+class QLabel;
+class QPushButton;
+class QSpinBox;
+class QTimer;
+
+namespace rtsa {
+
+class SpectrumPlotWidget;
+struct ExportResult;
+
+class MainWindow final : public QMainWindow {
+    Q_OBJECT
+
+public:
+    explicit MainWindow(std::unique_ptr<ISpectrumSource> source,
+                        QWidget* parent = nullptr,
+                        bool settingsEnabled = true,
+                        const SimulationConfig* initialSimulation = nullptr);
+    ~MainWindow() override;
+
+public slots:
+    void startAcquisition();
+    void pauseAcquisition();
+    void stopAcquisition();
+    void singleAcquisition();
+    void toggleFullScreen();
+
+private slots:
+    void refreshDisplay();
+    void refreshStatistics();
+    void applySourceConfiguration();
+    void applyNonFrequencySourceConfiguration();
+    void applyStartStopConfiguration();
+    void applyTraceConfiguration();
+    void applyAmplitudeScale();
+    void applyVerticalScale();
+    void applyPlotAppearance();
+    void autoRangeAmplitude();
+    void measureRangePeak();
+    void measureChannelPower();
+    void handleSourceState(int stateValue);
+    void handleMarkerChanged(double frequencyHz, float amplitude,
+                             const QString& unitText, bool calibrated);
+    void handleSpanScaleRequested(double scaleFactor, double anchorFrequencyHz);
+    void handleFrequencyPanRequested(double centerShiftHz);
+    void handleFrequencyRangeSelected(double startFrequencyHz, double stopFrequencyHz);
+    void recordPaintedFrameLatency(std::uint64_t publicationSequence,
+                                   std::uint64_t timestampNs);
+    void resetFrequencyRange();
+    void saveScreenshot();
+    void saveSimulationScenario();
+    void exportCsv();
+    void handleExportFinished();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
+
+private:
+    void buildUi();
+    QWidget* buildControlPanel();
+    QWidget* buildSourceGroup();
+    QWidget* buildDisplayGroup();
+    QWidget* buildSimulationGroup();
+    QWidget* buildTraceGroup();
+    QWidget* buildMarkerGroup();
+    QWidget* buildMeasurementGroup();
+    QWidget* buildFileGroup();
+    QWidget* buildTelemetryGroup();
+    void connectUi();
+    void loadSettings();
+    void loadSimulationConfiguration(const SimulationConfig& config);
+    void saveSettings() const;
+    void updateButtonStates(SourceState state);
+    void refreshMarkerLabels();
+    void configureSourceFromUi();
+    void synchronizeStartStopFromCenterSpan();
+    SimulationConfig configurationFromUi() const;
+    static QString formatRate(double value, const QString& suffix);
+    double displayLatencyP95() const;
+
+    SpectrumPipeline pipeline_;
+    std::unique_ptr<ISpectrumSource> source_;
+    ISimulationConfigurable* simulationControl_ = nullptr;
+    SpectrumPlotWidget* plot_ = nullptr;
+    QTimer* renderTimer_ = nullptr;
+    QTimer* statisticsTimer_ = nullptr;
+
+    QDoubleSpinBox* centerFrequencySpin_ = nullptr;
+    QDoubleSpinBox* spanSpin_ = nullptr;
+    QDoubleSpinBox* startFrequencySpin_ = nullptr;
+    QDoubleSpinBox* stopFrequencySpin_ = nullptr;
+    QComboBox* fftSizeCombo_ = nullptr;
+    QDoubleSpinBox* sourceFrameRateSpin_ = nullptr;
+    QCheckBox* unthrottledCheck_ = nullptr;
+    QDoubleSpinBox* noiseFloorSpin_ = nullptr;
+    QDoubleSpinBox* noiseDeviationSpin_ = nullptr;
+    QCheckBox* tone1EnabledCheck_ = nullptr;
+    QDoubleSpinBox* tone1OffsetSpin_ = nullptr;
+    QDoubleSpinBox* tone1AmplitudeSpin_ = nullptr;
+    QDoubleSpinBox* tone1WidthSpin_ = nullptr;
+    QCheckBox* tone2EnabledCheck_ = nullptr;
+    QDoubleSpinBox* tone2OffsetSpin_ = nullptr;
+    QDoubleSpinBox* tone2AmplitudeSpin_ = nullptr;
+    QDoubleSpinBox* tone2WidthSpin_ = nullptr;
+    QCheckBox* sweepEnabledCheck_ = nullptr;
+    QDoubleSpinBox* sweepStartOffsetSpin_ = nullptr;
+    QDoubleSpinBox* sweepStopOffsetSpin_ = nullptr;
+    QComboBox* sweepDirectionCombo_ = nullptr;
+    QDoubleSpinBox* sweepPeriodSpin_ = nullptr;
+    QDoubleSpinBox* sweepAmplitudeSpin_ = nullptr;
+    QDoubleSpinBox* transientProbabilitySpin_ = nullptr;
+    QDoubleSpinBox* transientAmplitudeSpin_ = nullptr;
+    QDoubleSpinBox* transientDurationSpin_ = nullptr;
+    QDoubleSpinBox* referenceLevelSpin_ = nullptr;
+    QDoubleSpinBox* bottomLevelSpin_ = nullptr;
+    QDoubleSpinBox* verticalScaleSpin_ = nullptr;
+    QComboBox* traceModeCombo_ = nullptr;
+    QComboBox* plotColorCombo_ = nullptr;
+    QComboBox* plotThemeCombo_ = nullptr;
+    QComboBox* activeMarkerCombo_ = nullptr;
+    QSpinBox* averageCountSpin_ = nullptr;
+    QSpinBox* plotLineWidthSpin_ = nullptr;
+    QDoubleSpinBox* peakThresholdSpin_ = nullptr;
+    QDoubleSpinBox* measurementStartSpin_ = nullptr;
+    QDoubleSpinBox* measurementStopSpin_ = nullptr;
+    QCheckBox* deltaMarkerCheck_ = nullptr;
+    QCheckBox* plotGridCheck_ = nullptr;
+    QPushButton* startButton_ = nullptr;
+    QPushButton* pauseButton_ = nullptr;
+    QPushButton* stopButton_ = nullptr;
+    QPushButton* singleButton_ = nullptr;
+    QPushButton* fullScreenButton_ = nullptr;
+    QPushButton* autoRangeButton_ = nullptr;
+    QPushButton* peakButton_ = nullptr;
+    QPushButton* nextPeakButton_ = nullptr;
+    QPushButton* previousPeakButton_ = nullptr;
+    QPushButton* clearMarkerButton_ = nullptr;
+    QPushButton* clearAllMarkersButton_ = nullptr;
+    QPushButton* rangePeakButton_ = nullptr;
+    QPushButton* channelPowerButton_ = nullptr;
+    QPushButton* resetTraceButton_ = nullptr;
+    QPushButton* screenshotButton_ = nullptr;
+    QPushButton* exportCsvButton_ = nullptr;
+    QPushButton* saveScenarioButton_ = nullptr;
+    QLabel* markerLabel_ = nullptr;
+    QLabel* deltaMarkerLabel_ = nullptr;
+    QLabel* measurementResultLabel_ = nullptr;
+    QLabel* sourceStateLabel_ = nullptr;
+    QLabel* inputRateLabel_ = nullptr;
+    QLabel* displayRateLabel_ = nullptr;
+    QLabel* dataRateLabel_ = nullptr;
+    QLabel* sourceDropLabel_ = nullptr;
+    QLabel* invalidFrameLabel_ = nullptr;
+    QLabel* processingDropLabel_ = nullptr;
+    QLabel* publishedFrameLabel_ = nullptr;
+    QLabel* displaySkippedLabel_ = nullptr;
+    QLabel* uptimeLabel_ = nullptr;
+    QLabel* fftSizeLabel_ = nullptr;
+    QLabel* lastErrorLabel_ = nullptr;
+    QLabel* latencyLabel_ = nullptr;
+    QLabel* latencyP95Label_ = nullptr;
+    QLabel* processingTimeLabel_ = nullptr;
+    QLabel* renderTimeLabel_ = nullptr;
+    QLabel* queueDepthLabel_ = nullptr;
+    QLabel* fileOperationLabel_ = nullptr;
+
+    QFutureWatcher<ExportResult>* exportWatcher_ = nullptr;
+    bool settingsEnabled_ = true;
+    double fullRangeCenterHz_ = 1.0e9;
+    double fullRangeSpanHz_ = 200.0e6;
+
+    std::uint64_t lastDisplayedPublicationSequence_ = 0;
+    std::uint64_t lastLatencyPublicationSequence_ = 0;
+    std::uint64_t displayedFramesInWindow_ = 0;
+    std::uint64_t displayedFramesTotal_ = 0;
+    std::uint64_t displaySkippedFrames_ = 0;
+    double displayFramesPerSecond_ = 0.0;
+    std::array<double, 256> displayLatenciesMs_ {};
+    std::size_t displayLatencyCount_ = 0;
+    std::size_t displayLatencyWriteIndex_ = 0;
+    QElapsedTimer displayRateTimer_;
+    QString lastSourceError_;
+    QString lastSourceErrorTime_;
+};
+
+} // namespace rtsa

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "name": "Unthrottled 16384-bin pipeline stress",
+  "simulation": {
+    "binCount": 16384,
+    "frameRate": 1000,
+    "unthrottled": true,
+    "centerFrequencyHz": 1000000000,
+    "spanHz": 200000000,
+    "noiseFloorDbfs": -115,
+    "noiseDeviationDb": 1,
+    "randomSeed": 75309091,
+    "tones": [
+      {
+        "enabled": true,
+        "frequencyHz": 1010000000,
+        "amplitudeDbfs": -20,
+        "widthBins": 1
+      }
+    ],
+    "sweep": {
+      "enabled": false,
+      "startFrequencyHz": 950000000,
+      "stopFrequencyHz": 1050000000,
+      "periodSeconds": 2,
+      "amplitudeDbfs": -40,
+      "direction": "ping-pong"
+    },
+    "transient": {
+      "probabilityPerFrame": 0,
+      "amplitudeDbfs": -12,
+      "durationSeconds": 0.1
+    },
+    "faultInjection": {
+      "pauseEveryFrames": 0,
+      "pauseDurationSeconds": 0.1,
+      "sequenceJumpEveryFrames": 0,
+      "sequenceSkipCount": 1,
+      "invalidFrameEveryFrames": 0,
+      "burstEveryFrames": 0,
+      "burstFrameCount": 4
+    }
+  }
+}

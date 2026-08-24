@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 2,
+  "name": "Default dual-tone sweep and transient",
+  "simulation": {
+    "binCount": 16384,
+    "frameRate": 200,
+    "unthrottled": false,
+    "centerFrequencyHz": 1000000000,
+    "spanHz": 200000000,
+    "noiseFloorDbfs": -110,
+    "noiseDeviationDb": 1.5,
+    "randomSeed": 75309091,
+    "tones": [
+      {
+        "enabled": true,
+        "frequencyHz": 980000000,
+        "amplitudeDbfs": -35,
+        "widthBins": 1.5
+      },
+      {
+        "enabled": true,
+        "frequencyHz": 1035000000,
+        "amplitudeDbfs": -18,
+        "widthBins": 2.5
+      }
+    ],
+    "sweep": {
+      "enabled": true,
+      "startFrequencyHz": 930000000,
+      "stopFrequencyHz": 1070000000,
+      "periodSeconds": 4,
+      "amplitudeDbfs": -45,
+      "direction": "up"
+    },
+    "transient": {
+      "probabilityPerFrame": 0.002,
+      "amplitudeDbfs": -12,
+      "durationSeconds": 0.1
+    },
+    "faultInjection": {
+      "pauseEveryFrames": 0,
+      "pauseDurationSeconds": 0.1,
+      "sequenceJumpEveryFrames": 0,
+      "sequenceSkipCount": 1,
+      "invalidFrameEveryFrames": 0,
+      "burstEveryFrames": 0,
+      "burstFrameCount": 4
+    }
+  }
+}

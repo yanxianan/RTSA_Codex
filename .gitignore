@@ -1,0 +1,6 @@
+build/
+.qtcreator/
+*.user
+*.cmake.user
+.DS_Store
+Thumbs.db
