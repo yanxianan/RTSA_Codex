@@ -139,7 +139,10 @@ bool AppSettings::isValid() const noexcept
         && plotLineWidth >= 1 && plotLineWidth <= 4
         && plotTheme >= 0 && plotTheme <= 1
         && traceMode >= 0 && traceMode <= 3
-        && averageCount >= 1 && averageCount <= 1024;
+        && averageCount >= 1 && averageCount <= 1024
+        && displayViewMode >= 0 && displayViewMode <= 2
+        && waterfallColormap >= 0 && waterfallColormap <= 4
+        && waterfallHistoryDepth >= 64 && waterfallHistoryDepth <= 2048;
 }
 
 SettingsLoadResult ConfigurationStore::load(QSettings& storage)
@@ -239,7 +242,13 @@ SettingsLoadResult ConfigurationStore::load(QSettings& storage)
         && readInt(storage, QStringLiteral("traceMode"),
                    defaults.traceMode, candidate.traceMode)
         && readInt(storage, QStringLiteral("averageCount"),
-                   defaults.averageCount, candidate.averageCount);
+                   defaults.averageCount, candidate.averageCount)
+        && readInt(storage, QStringLiteral("displayViewMode"),
+                   defaults.displayViewMode, candidate.displayViewMode)
+        && readInt(storage, QStringLiteral("waterfallColormap"),
+                   defaults.waterfallColormap, candidate.waterfallColormap)
+        && readInt(storage, QStringLiteral("waterfallHistoryDepth"),
+                   defaults.waterfallHistoryDepth, candidate.waterfallHistoryDepth);
     storage.endGroup();
 
     const QString storageError = statusMessage(storage.status());
@@ -306,6 +315,9 @@ SettingsSaveResult ConfigurationStore::save(QSettings& storage,
     storage.setValue(QStringLiteral("plotTheme"), settings.plotTheme);
     storage.setValue(QStringLiteral("traceMode"), settings.traceMode);
     storage.setValue(QStringLiteral("averageCount"), settings.averageCount);
+    storage.setValue(QStringLiteral("displayViewMode"), settings.displayViewMode);
+    storage.setValue(QStringLiteral("waterfallColormap"), settings.waterfallColormap);
+    storage.setValue(QStringLiteral("waterfallHistoryDepth"), settings.waterfallHistoryDepth);
     storage.endGroup();
     storage.sync();
 

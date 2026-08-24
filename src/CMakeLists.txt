@@ -25,10 +25,14 @@ add_executable(rtsa_app
     app/main.cpp
     ui/ApplicationTheme.cpp
     ui/ApplicationTheme.h
+    plot/Colormap.cpp
+    plot/Colormap.h
     plot/RasterSpectrumRenderer.cpp
     plot/RasterSpectrumRenderer.h
     plot/SpectrumPlotWidget.cpp
     plot/SpectrumPlotWidget.h
+    plot/WaterfallPlotWidget.cpp
+    plot/WaterfallPlotWidget.h
     services/SpectrumExporter.cpp
     services/SpectrumExporter.h
     services/ConfigurationStore.cpp

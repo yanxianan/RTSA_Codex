@@ -3,6 +3,7 @@
 #include "core/AmplitudeUnits.h"
 #include "core/SpectrumMeasurements.h"
 #include "plot/SpectrumPlotWidget.h"
+#include "plot/WaterfallPlotWidget.h"
 #include "services/ConfigurationStore.h"
 #include "services/SpectrumExporter.h"
 #include "sources/SimulationScenarioWriter.h"
@@ -30,6 +31,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -111,6 +113,8 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
     applyTraceConfiguration();
     applyAmplitudeScale();
     applyPlotAppearance();
+    applyDisplayViewMode();
+    applyWaterfallSettings();
     configureSourceFromUi();
 
     exportWatcher_ = new QFutureWatcher<ExportResult>(this);
@@ -235,6 +239,9 @@ void MainWindow::refreshDisplay()
     ++displayedFramesInWindow_;
     ++displayedFramesTotal_;
     plot_->setFrame(frame);
+    if (waterfallPlot_ && waterfallPlot_->isVisible()) {
+        waterfallPlot_->addFrame(frame);
+    }
 }
 
 void MainWindow::refreshStatistics()
@@ -363,6 +370,10 @@ void MainWindow::applyAmplitudeScale()
     }
     plot_->setAmplitudeScale(static_cast<float>(referenceLevelSpin_->value()),
                              static_cast<float>(bottomLevelSpin_->value()));
+    if (waterfallPlot_) {
+        waterfallPlot_->setAmplitudeScale(static_cast<float>(referenceLevelSpin_->value()),
+                                          static_cast<float>(bottomLevelSpin_->value()));
+    }
 }
 
 void MainWindow::applyVerticalScale()
@@ -383,6 +394,39 @@ void MainWindow::applyPlotAppearance()
                          plotLineWidthSpin_->value(),
                          plotGridCheck_->isChecked(),
                          plotThemeCombo_->currentData().toInt() == 1);
+}
+
+void MainWindow::applyDisplayViewMode()
+{
+    if (!plot_ || !waterfallPlot_ || !displayViewModeCombo_) {
+        return;
+    }
+    const int mode = displayViewModeCombo_->currentData().toInt();
+    switch (mode) {
+    case 0:
+        plot_->show();
+        waterfallPlot_->hide();
+        break;
+    case 1:
+        plot_->hide();
+        waterfallPlot_->show();
+        break;
+    case 2:
+    default:
+        plot_->show();
+        waterfallPlot_->show();
+        break;
+    }
+}
+
+void MainWindow::applyWaterfallSettings()
+{
+    if (!waterfallPlot_ || !waterfallColormapCombo_ || !waterfallHistorySpin_) {
+        return;
+    }
+    waterfallPlot_->setColormap(static_cast<ColormapPreset>(
+        waterfallColormapCombo_->currentData().toInt()));
+    waterfallPlot_->setHistoryDepth(waterfallHistorySpin_->value());
 }
 
 void MainWindow::autoRangeAmplitude()
@@ -702,10 +746,23 @@ void MainWindow::buildUi()
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
-    plot_ = new SpectrumPlotWidget(central);
+    plotSplitter_ = new QSplitter(Qt::Vertical, central);
+    plotSplitter_->setObjectName(QStringLiteral("plotSplitter"));
+
+    plot_ = new SpectrumPlotWidget(plotSplitter_);
     plot_->setObjectName(QStringLiteral("spectrumPlot"));
     plot_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    layout->addWidget(plot_, 1);
+
+    waterfallPlot_ = new WaterfallPlotWidget(plotSplitter_);
+    waterfallPlot_->setObjectName(QStringLiteral("waterfallPlot"));
+    waterfallPlot_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    plotSplitter_->addWidget(plot_);
+    plotSplitter_->addWidget(waterfallPlot_);
+    plotSplitter_->setStretchFactor(0, 1);
+    plotSplitter_->setStretchFactor(1, 1);
+
+    layout->addWidget(plotSplitter_, 1);
     layout->addWidget(buildControlPanel());
     setCentralWidget(central);
 }
@@ -721,6 +778,7 @@ QWidget* MainWindow::buildControlPanel()
         layout->addWidget(buildSimulationGroup());
     }
     layout->addWidget(buildDisplayGroup());
+    layout->addWidget(buildWaterfallGroup());
     layout->addWidget(buildTraceGroup());
     layout->addWidget(buildMarkerGroup());
     layout->addWidget(buildMeasurementGroup());
@@ -867,6 +925,42 @@ QWidget* MainWindow::buildDisplayGroup()
     form->addRow(tr("绘图区主题"), plotThemeCombo_);
     form->addRow(autoRangeButton_);
     form->addRow(fullScreenButton_);
+    return group;
+}
+
+QWidget* MainWindow::buildWaterfallGroup()
+{
+    auto* group = new QGroupBox(tr("瀑布图"), this);
+    auto* form = new QFormLayout(group);
+
+    displayViewModeCombo_ = new QComboBox(group);
+    displayViewModeCombo_->setObjectName(QStringLiteral("displayViewMode"));
+    displayViewModeCombo_->addItem(tr("仅频谱图"), 0);
+    displayViewModeCombo_->addItem(tr("仅瀑布图"), 1);
+    displayViewModeCombo_->addItem(tr("频谱+瀑布图"), 2);
+    displayViewModeCombo_->setCurrentIndex(2);
+
+    waterfallColormapCombo_ = new QComboBox(group);
+    waterfallColormapCombo_->setObjectName(QStringLiteral("waterfallColormap"));
+    waterfallColormapCombo_->addItem(tr("Turbo (推荐)"), static_cast<int>(ColormapPreset::Turbo));
+    waterfallColormapCombo_->addItem(tr("Viridis"), static_cast<int>(ColormapPreset::Viridis));
+    waterfallColormapCombo_->addItem(tr("Jet (彩虹)"), static_cast<int>(ColormapPreset::Jet));
+    waterfallColormapCombo_->addItem(tr("Hot (热力)"), static_cast<int>(ColormapPreset::Hot));
+    waterfallColormapCombo_->addItem(tr("灰度"), static_cast<int>(ColormapPreset::Grayscale));
+
+    waterfallHistorySpin_ = new QSpinBox(group);
+    waterfallHistorySpin_->setObjectName(QStringLiteral("waterfallHistoryDepth"));
+    waterfallHistorySpin_->setRange(64, 2048);
+    waterfallHistorySpin_->setValue(512);
+    waterfallHistorySpin_->setSuffix(tr(" 行"));
+
+    waterfallClearButton_ = new QPushButton(tr("清空瀑布图"), group);
+    waterfallClearButton_->setObjectName(QStringLiteral("waterfallClearButton"));
+
+    form->addRow(tr("显示视图"), displayViewModeCombo_);
+    form->addRow(tr("调色板"), waterfallColormapCombo_);
+    form->addRow(tr("历史深度"), waterfallHistorySpin_);
+    form->addRow(waterfallClearButton_);
     return group;
 }
 
@@ -1313,6 +1407,24 @@ void MainWindow::connectUi()
     connect(plot_, &SpectrumPlotWidget::framePainted,
             this, &MainWindow::recordPaintedFrameLatency);
 
+    connect(displayViewModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::applyDisplayViewMode);
+    connect(waterfallColormapCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::applyWaterfallSettings);
+    connect(waterfallHistorySpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, &MainWindow::applyWaterfallSettings);
+    connect(waterfallClearButton_, &QPushButton::clicked,
+            waterfallPlot_, &WaterfallPlotWidget::clear);
+
+    connect(waterfallPlot_, &WaterfallPlotWidget::spanScaleRequested,
+            this, &MainWindow::handleSpanScaleRequested);
+    connect(waterfallPlot_, &WaterfallPlotWidget::frequencyPanRequested,
+            this, &MainWindow::handleFrequencyPanRequested);
+    connect(waterfallPlot_, &WaterfallPlotWidget::frequencyRangeSelected,
+            this, &MainWindow::handleFrequencyRangeSelected);
+    connect(waterfallPlot_, &WaterfallPlotWidget::frequencyRangeResetRequested,
+            this, &MainWindow::resetFrequencyRange);
+
     auto* escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     connect(escapeShortcut, &QShortcut::activated, this, [this] {
         if (isFullScreen()) {
@@ -1386,6 +1498,17 @@ void MainWindow::loadSettings()
     if (traceIndex >= 0) {
         traceModeCombo_->setCurrentIndex(traceIndex);
     }
+    const int viewModeIndex = displayViewModeCombo_->findData(settings.displayViewMode);
+    if (viewModeIndex >= 0) {
+        displayViewModeCombo_->setCurrentIndex(viewModeIndex);
+    }
+    const int colormapIndex = waterfallColormapCombo_->findData(settings.waterfallColormap);
+    if (colormapIndex >= 0) {
+        waterfallColormapCombo_->setCurrentIndex(colormapIndex);
+    }
+    waterfallHistorySpin_->setValue(settings.waterfallHistoryDepth);
+    applyDisplayViewMode();
+    applyWaterfallSettings();
 }
 
 void MainWindow::saveSettings() const
@@ -1430,6 +1553,9 @@ void MainWindow::saveSettings() const
     settings.plotTheme = plotThemeCombo_->currentData().toInt();
     settings.traceMode = traceModeCombo_->currentData().toInt();
     settings.averageCount = averageCountSpin_->value();
+    settings.displayViewMode = displayViewModeCombo_->currentData().toInt();
+    settings.waterfallColormap = waterfallColormapCombo_->currentData().toInt();
+    settings.waterfallHistoryDepth = waterfallHistorySpin_->value();
 
     QSettings storage;
     const SettingsSaveResult result = ConfigurationStore::save(storage, settings);

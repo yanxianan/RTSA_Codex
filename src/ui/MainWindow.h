@@ -20,11 +20,13 @@ class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QSplitter;
 class QTimer;
 
 namespace rtsa {
 
 class SpectrumPlotWidget;
+class WaterfallPlotWidget;
 struct ExportResult;
 
 class MainWindow final : public QMainWindow {
@@ -54,6 +56,8 @@ private slots:
     void applyAmplitudeScale();
     void applyVerticalScale();
     void applyPlotAppearance();
+    void applyDisplayViewMode();
+    void applyWaterfallSettings();
     void autoRangeAmplitude();
     void measureRangePeak();
     void measureChannelPower();
@@ -80,6 +84,7 @@ private:
     QWidget* buildControlPanel();
     QWidget* buildSourceGroup();
     QWidget* buildDisplayGroup();
+    QWidget* buildWaterfallGroup();
     QWidget* buildSimulationGroup();
     QWidget* buildTraceGroup();
     QWidget* buildMarkerGroup();
@@ -102,6 +107,8 @@ private:
     std::unique_ptr<ISpectrumSource> source_;
     ISimulationConfigurable* simulationControl_ = nullptr;
     SpectrumPlotWidget* plot_ = nullptr;
+    WaterfallPlotWidget* waterfallPlot_ = nullptr;
+    QSplitter* plotSplitter_ = nullptr;
     QTimer* renderTimer_ = nullptr;
     QTimer* statisticsTimer_ = nullptr;
 
@@ -134,6 +141,10 @@ private:
     QDoubleSpinBox* referenceLevelSpin_ = nullptr;
     QDoubleSpinBox* bottomLevelSpin_ = nullptr;
     QDoubleSpinBox* verticalScaleSpin_ = nullptr;
+    QComboBox* displayViewModeCombo_ = nullptr;
+    QComboBox* waterfallColormapCombo_ = nullptr;
+    QSpinBox* waterfallHistorySpin_ = nullptr;
+    QPushButton* waterfallClearButton_ = nullptr;
     QComboBox* traceModeCombo_ = nullptr;
     QComboBox* plotColorCombo_ = nullptr;
     QComboBox* plotThemeCombo_ = nullptr;

@@ -128,14 +128,42 @@ target_link_libraries(rtsa_scenario_tests PRIVATE
 add_test(NAME rtsa_scenario_tests COMMAND rtsa_scenario_tests)
 set_tests_properties(rtsa_scenario_tests PROPERTIES TIMEOUT 10)
 
+add_executable(rtsa_waterfall_tests
+    tst_Waterfall.cpp
+    ../src/plot/Colormap.cpp
+    ../src/plot/Colormap.h
+    ../src/plot/WaterfallPlotWidget.cpp
+    ../src/plot/WaterfallPlotWidget.h
+)
+
+target_include_directories(rtsa_waterfall_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_link_libraries(rtsa_waterfall_tests PRIVATE
+    rtsa_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Test
+)
+
+add_test(NAME rtsa_waterfall_tests COMMAND rtsa_waterfall_tests)
+set_tests_properties(rtsa_waterfall_tests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 10
+)
+
 add_executable(rtsa_gui_tests
     tst_MainWindow.cpp
     ../src/ui/ApplicationTheme.cpp
     ../src/ui/ApplicationTheme.h
+    ../src/plot/Colormap.cpp
+    ../src/plot/Colormap.h
     ../src/plot/RasterSpectrumRenderer.cpp
     ../src/plot/RasterSpectrumRenderer.h
     ../src/plot/SpectrumPlotWidget.cpp
     ../src/plot/SpectrumPlotWidget.h
+    ../src/plot/WaterfallPlotWidget.cpp
+    ../src/plot/WaterfallPlotWidget.h
     ../src/services/ConfigurationStore.cpp
     ../src/services/ConfigurationStore.h
     ../src/services/SpectrumExporter.cpp

@@ -43,6 +43,9 @@ struct AppSettings {
     int plotTheme = 0;
     int traceMode = 0;
     int averageCount = 16;
+    int displayViewMode = 2; // 0: Spectrum, 1: Waterfall, 2: Split (Spectrum + Waterfall)
+    int waterfallColormap = 0; // 0: Turbo, 1: Viridis, 2: Jet, 3: Hot, 4: Grayscale
+    int waterfallHistoryDepth = 512;
 
     bool isValid() const noexcept;
 };

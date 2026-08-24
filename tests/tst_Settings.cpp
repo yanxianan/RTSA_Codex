@@ -60,6 +60,9 @@ void SettingsTests::validSettingsRoundTrip()
     expected.plotLineWidth = 3;
     expected.plotGridVisible = false;
     expected.plotTheme = 1;
+    expected.displayViewMode = 1;
+    expected.waterfallColormap = 2;
+    expected.waterfallHistoryDepth = 256;
 
     const SettingsSaveResult saved = ConfigurationStore::save(storage, expected);
     QVERIFY2(saved.success, qPrintable(saved.errorMessage));
@@ -69,6 +72,9 @@ void SettingsTests::validSettingsRoundTrip()
     QCOMPARE(loaded.settings.centerFrequencyMHz, expected.centerFrequencyMHz);
     QCOMPARE(loaded.settings.binCount, expected.binCount);
     QCOMPARE(loaded.settings.traceMode, expected.traceMode);
+    QCOMPARE(loaded.settings.displayViewMode, expected.displayViewMode);
+    QCOMPARE(loaded.settings.waterfallColormap, expected.waterfallColormap);
+    QCOMPARE(loaded.settings.waterfallHistoryDepth, expected.waterfallHistoryDepth);
     QCOMPARE(loaded.settings.tone1Enabled, expected.tone1Enabled);
     QCOMPARE(loaded.settings.tone1FrequencyMHz, expected.tone1FrequencyMHz);
     QCOMPARE(loaded.settings.tone1WidthBins, expected.tone1WidthBins);
