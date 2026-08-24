@@ -104,29 +104,55 @@ void WaterfallPlotWidget::updatePlotGeometry()
 
 void WaterfallPlotWidget::resizeImageBuffer(const int width, const int height)
 {
-    bufferWidth_ = std::max(64, width);
-    historyDepth_ = std::max(64, height);
-    bufferImage_ = QImage(bufferWidth_, historyDepth_, QImage::Format_Indexed8);
-    bufferImage_.setColorTable(colorTable_);
-    bufferImage_.fill(0);
-    headRow_ = 0;
-    rowCount_ = 0;
+    const int newWidth = std::max(64, width);
+    const int newHeight = std::max(64, height);
+    if (bufferWidth_ == newWidth && historyDepth_ == newHeight && !bufferImage_.isNull()) {
+        return;
+    }
+
+    QImage newImage(newWidth, newHeight, QImage::Format_Indexed8);
+    newImage.setColorTable(colorTable_);
+    newImage.fill(0);
+
+    if (!bufferImage_.isNull() && rowCount_ > 0) {
+        // Preserve existing history into new image buffer
+        QPainter p(&newImage);
+        if (rowCount_ < historyDepth_) {
+            const int h = std::min(rowCount_, newHeight);
+            const QRect src(0, headRow_, bufferWidth_, h);
+            const QRect dst(0, newHeight - h, newWidth, h);
+            p.drawImage(dst, bufferImage_, src);
+            headRow_ = newHeight - h;
+        } else {
+            const int h1 = std::min(historyDepth_ - headRow_, newHeight);
+            const QRect src1(0, headRow_, bufferWidth_, h1);
+            const QRect dst1(0, 0, newWidth, h1);
+            p.drawImage(dst1, bufferImage_, src1);
+
+            const int h2 = std::min(headRow_, newHeight - h1);
+            if (h2 > 0) {
+                const QRect src2(0, 0, bufferWidth_, h2);
+                const QRect dst2(0, h1, newWidth, h2);
+                p.drawImage(dst2, bufferImage_, src2);
+            }
+            headRow_ = 0;
+        }
+        p.end();
+        rowCount_ = std::min(rowCount_, newHeight);
+    } else {
+        headRow_ = 0;
+        rowCount_ = 0;
+    }
+
+    bufferWidth_ = newWidth;
+    historyDepth_ = newHeight;
+    bufferImage_ = std::move(newImage);
 }
 
 void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
 {
     if (!frame || frame->bins.empty()) {
         return;
-    }
-
-    const bool frequencyRangeChanged = latestFrame_ && (
-        latestFrame_->metadata.centerFrequencyHz != frame->metadata.centerFrequencyHz
-        || latestFrame_->metadata.spanHz != frame->metadata.spanHz
-        || latestFrame_->metadata.binCount != frame->metadata.binCount
-        || latestFrame_->metadata.configurationEpoch != frame->metadata.configurationEpoch);
-
-    if (frequencyRangeChanged) {
-        clear();
     }
     latestFrame_ = frame;
 

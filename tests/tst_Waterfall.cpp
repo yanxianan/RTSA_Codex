@@ -21,7 +21,7 @@ private slots:
     void waterfallSignalsEmitOnInteraction();
     void waterfallOffscreenPaintPerformance();
     void waterfallAlwaysPlacesNewestFrameAtTop();
-    void frequencyRangeChangeClearsWaterfallHistory();
+    void historyIsPreservedAcrossParameterChangesAndResize();
 };
 
 void WaterfallTests::colormapTableGeneratesValidEntries()
@@ -190,28 +190,59 @@ void WaterfallTests::waterfallAlwaysPlacesNewestFrameAtTop()
     QVERIFY2(oldPixel.red() < 50, "Older noise line was unexpectedly bright");
 }
 
-void WaterfallTests::frequencyRangeChangeClearsWaterfallHistory()
+void WaterfallTests::historyIsPreservedAcrossParameterChangesAndResize()
 {
     WaterfallPlotWidget widget;
     widget.resize(600, 300);
     widget.setHistoryDepth(64);
+    widget.setAmplitudeScale(0.0F, -100.0F);
 
     auto frame1 = std::make_shared<SpectrumFrame>();
     frame1->metadata.binCount = 512;
     frame1->metadata.centerFrequencyHz = 1.0e9;
     frame1->metadata.spanHz = 100.0e6;
-    frame1->bins.assign(512, -50.0F);
-    widget.addFrame(frame1);
+    frame1->bins.assign(512, -100.0F);
+    frame1->bins[50] = 0.0F; // Peak at bin 50
 
-    // Shift center frequency to 1.5 GHz
+    for (int i = 0; i < 20; ++i) {
+        frame1->metadata.sequence = i + 1;
+        widget.addFrame(frame1);
+    }
+
+    // Now send frame2 with peak at a different position (e.g. bin 200)
     auto frame2 = std::make_shared<SpectrumFrame>();
     frame2->metadata.binCount = 512;
     frame2->metadata.centerFrequencyHz = 1.5e9;
     frame2->metadata.spanHz = 100.0e6;
-    frame2->bins.assign(512, -30.0F);
-    widget.addFrame(frame2);
+    frame2->bins.assign(512, -100.0F);
+    frame2->bins[200] = 0.0F;
 
-    QVERIFY(widget.plotRect().isValid());
+    for (int i = 20; i < 40; ++i) {
+        frame2->metadata.sequence = i + 1;
+        widget.addFrame(frame2);
+    }
+
+    // Render to check that both the newest peak (bin 200 at top) and older peak (bin 50 lower down) exist
+    QImage img(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    QPainter p(&img);
+    widget.render(&p);
+    p.end();
+
+    const QRect rect = widget.plotRect();
+    const int newPeakX = rect.left() + static_cast<int>(std::round(rect.width() * (200.0 / 512.0)));
+    const int oldPeakX = rect.left() + static_cast<int>(std::round(rect.width() * (50.0 / 512.0)));
+
+    // New peak should be bright near the top
+    const QColor newTopPixel = img.pixelColor(newPeakX, rect.top() + 4);
+    QVERIFY2(newTopPixel.red() > 180, "New peak was not rendered at top");
+
+    // Old peak should still exist in the lower part of the waterfall
+    int maxOldRed = 0;
+    for (int y = rect.top() + 10; y <= rect.bottom(); ++y) {
+        maxOldRed = std::max(maxOldRed, img.pixelColor(oldPeakX, y).red());
+    }
+    QVERIFY2(maxOldRed > 180, "Old peak was incorrectly erased from history");
 }
 
 } // namespace rtsa
