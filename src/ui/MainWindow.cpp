@@ -812,38 +812,7 @@ void MainWindow::buildMenuBar()
     viewMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
     viewMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
 
-    // 3. Control Menu
-    auto* controlMenu = bar->addMenu(tr("控制 (&C)"));
-    controlMenu->addAction(tr("开始采集 (&Start)"), QKeySequence(Qt::Key_F5), this, &MainWindow::startAcquisition);
-    controlMenu->addAction(tr("暂停采集 (&Pause)"), QKeySequence(Qt::Key_F6), this, &MainWindow::pauseAcquisition);
-    controlMenu->addAction(tr("单次扫描 (&Single)"), QKeySequence(Qt::Key_F7), this, &MainWindow::singleAcquisition);
-    controlMenu->addAction(tr("停止采集 (&Stop)"), QKeySequence(Qt::Key_F8), this, &MainWindow::stopAcquisition);
-    controlMenu->addSeparator();
-    controlMenu->addAction(tr("重置频率范围 (&Reset Span)"), QKeySequence(Qt::CTRL | Qt::Key_0), this, &MainWindow::resetFrequencyRange);
-    controlMenu->addAction(tr("重置迹线平均 (&Reset Trace)"), [this] {
-        if (resetTraceButton_) resetTraceButton_->click();
-    });
-    controlMenu->addAction(tr("清空瀑布图历史 (&Clear Waterfall)"), [this] {
-        if (waterfallClearButton_) waterfallClearButton_->click();
-    });
-
-    // 4. Measure Menu
-    auto* measureMenu = bar->addMenu(tr("测量 (&M)"));
-    auto* peakAct = measureMenu->addAction(tr("峰值搜索 (Peak Search)"), [this] {
-        if (peakButton_) peakButton_->click();
-    });
-    peakAct->setShortcut(QKeySequence(Qt::Key_M));
-    measureMenu->addAction(tr("下一个峰值 (Next Peak)"), [this] {
-        if (nextPeakButton_) nextPeakButton_->click();
-    });
-    measureMenu->addAction(tr("上一个峰值 (Prev Peak)"), [this] {
-        if (previousPeakButton_) previousPeakButton_->click();
-    });
-    measureMenu->addSeparator();
-    measureMenu->addAction(tr("选段峰值测量 (Range Peak)"), this, &MainWindow::measureRangePeak);
-    measureMenu->addAction(tr("信道功率积分 (Channel Power)"), this, &MainWindow::measureChannelPower);
-
-    // 5. System Menu
+    // 3. System Menu
     auto* sysMenu = bar->addMenu(tr("系统 (&S)"));
     sysMenu->addAction(tr("实时引擎遥测监控 (&Telemetry)..."), this, &MainWindow::showTelemetryDialog);
     sysMenu->addSeparator();
@@ -930,42 +899,42 @@ QWidget* MainWindow::buildControlPanel()
     acqLayout->addWidget(singleButton_, 1, 1);
     layout->addWidget(acqBox);
 
-    // 2. Tab Widget with 6 Industrial Category Pages
+    // 2. Tab Widget with 4 Clean Functional Pages
     mainTabWidget_ = new QTabWidget(panel);
     mainTabWidget_->setObjectName(QStringLiteral("mainTabWidget"));
 
-    // Tab 1: 频率与信号 (Freq & Source)
-    auto* sourcePage = new QWidget;
-    auto* sourceLayout = new QVBoxLayout(sourcePage);
-    sourceLayout->setContentsMargins(2, 4, 2, 4);
-    sourceLayout->setSpacing(6);
-    sourceLayout->addWidget(buildSourceGroup());
+    // Tab 1: 频率与幅度 (Freq & Amplitude)
+    auto* freqAmpPage = new QWidget;
+    auto* freqAmpLayout = new QVBoxLayout(freqAmpPage);
+    freqAmpLayout->setContentsMargins(2, 4, 2, 4);
+    freqAmpLayout->setSpacing(6);
+    freqAmpLayout->addWidget(buildSourceGroup());
+    freqAmpLayout->addWidget(buildDisplayGroup());
+    freqAmpLayout->addStretch(1);
+
+    auto* freqAmpScroll = new QScrollArea;
+    freqAmpScroll->setWidgetResizable(true);
+    freqAmpScroll->setFrameShape(QFrame::NoFrame);
+    freqAmpScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    freqAmpScroll->setWidget(freqAmpPage);
+    mainTabWidget_->addTab(freqAmpScroll, tr("频率与幅度"));
+
+    // Tab 2: 模拟信号源 (Simulated Source) - if supported
     if (simulationControl_) {
-        sourceLayout->addWidget(buildSimulationGroup());
+        auto* simPage = new QWidget;
+        auto* simLayout = new QVBoxLayout(simPage);
+        simLayout->setContentsMargins(2, 4, 2, 4);
+        simLayout->setSpacing(6);
+        simLayout->addWidget(buildSimulationGroup());
+        simLayout->addStretch(1);
+
+        auto* simScroll = new QScrollArea;
+        simScroll->setWidgetResizable(true);
+        simScroll->setFrameShape(QFrame::NoFrame);
+        simScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        simScroll->setWidget(simPage);
+        mainTabWidget_->addTab(simScroll, tr("模拟信号源"));
     }
-    sourceLayout->addStretch(1);
-
-    auto* sourceScroll = new QScrollArea;
-    sourceScroll->setWidgetResizable(true);
-    sourceScroll->setFrameShape(QFrame::NoFrame);
-    sourceScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    sourceScroll->setWidget(sourcePage);
-    mainTabWidget_->addTab(sourceScroll, tr("频率/信号"));
-
-    // Tab 2: 幅度与刻度 (Amp & Scale)
-    auto* ampPage = new QWidget;
-    auto* ampLayout = new QVBoxLayout(ampPage);
-    ampLayout->setContentsMargins(2, 4, 2, 4);
-    ampLayout->setSpacing(6);
-    ampLayout->addWidget(buildDisplayGroup());
-    ampLayout->addStretch(1);
-
-    auto* ampScroll = new QScrollArea;
-    ampScroll->setWidgetResizable(true);
-    ampScroll->setFrameShape(QFrame::NoFrame);
-    ampScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    ampScroll->setWidget(ampPage);
-    mainTabWidget_->addTab(ampScroll, tr("幅度/刻度"));
 
     // Tab 3: 迹线与瀑布 (Trace & Waterfall)
     auto* traceViewPage = new QWidget;
@@ -981,54 +950,32 @@ QWidget* MainWindow::buildControlPanel()
     traceViewScroll->setFrameShape(QFrame::NoFrame);
     traceViewScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     traceViewScroll->setWidget(traceViewPage);
-    mainTabWidget_->addTab(traceViewScroll, tr("迹线/瀑布"));
+    mainTabWidget_->addTab(traceViewScroll, tr("迹线与瀑布"));
 
-    // Tab 4: 标记搜索 (Markers)
-    auto* markerPage = new QWidget;
-    auto* markerLayout = new QVBoxLayout(markerPage);
-    markerLayout->setContentsMargins(2, 4, 2, 4);
-    markerLayout->setSpacing(6);
-    markerLayout->addWidget(buildMarkerGroup());
-    markerLayout->addStretch(1);
+    // Tab 4: 标记与测量 (Markers & Measure)
+    auto* markerMeasurePage = new QWidget;
+    auto* markerMeasureLayout = new QVBoxLayout(markerMeasurePage);
+    markerMeasureLayout->setContentsMargins(2, 4, 2, 4);
+    markerMeasureLayout->setSpacing(6);
+    markerMeasureLayout->addWidget(buildMarkerGroup());
+    markerMeasureLayout->addWidget(buildMeasurementGroup());
+    markerMeasureLayout->addStretch(1);
 
-    auto* markerScroll = new QScrollArea;
-    markerScroll->setWidgetResizable(true);
-    markerScroll->setFrameShape(QFrame::NoFrame);
-    markerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    markerScroll->setWidget(markerPage);
-    mainTabWidget_->addTab(markerScroll, tr("标记"));
-
-    // Tab 5: 功率测量 (Measurement)
-    auto* measurePage = new QWidget;
-    auto* measureLayout = new QVBoxLayout(measurePage);
-    measureLayout->setContentsMargins(2, 4, 2, 4);
-    measureLayout->setSpacing(6);
-    measureLayout->addWidget(buildMeasurementGroup());
-    measureLayout->addStretch(1);
-
-    auto* measureScroll = new QScrollArea;
-    measureScroll->setWidgetResizable(true);
-    measureScroll->setFrameShape(QFrame::NoFrame);
-    measureScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    measureScroll->setWidget(measurePage);
-    mainTabWidget_->addTab(measureScroll, tr("测量"));
-
-    // Tab 6: 场景与文件 (Files & Scenario)
-    auto* filePage = new QWidget;
-    auto* fileLayout = new QVBoxLayout(filePage);
-    fileLayout->setContentsMargins(2, 4, 2, 4);
-    fileLayout->setSpacing(6);
-    fileLayout->addWidget(buildFileGroup());
-    fileLayout->addStretch(1);
-
-    auto* fileScroll = new QScrollArea;
-    fileScroll->setWidgetResizable(true);
-    fileScroll->setFrameShape(QFrame::NoFrame);
-    fileScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    fileScroll->setWidget(filePage);
-    mainTabWidget_->addTab(fileScroll, tr("场景/文件"));
+    auto* markerMeasureScroll = new QScrollArea;
+    markerMeasureScroll->setWidgetResizable(true);
+    markerMeasureScroll->setFrameShape(QFrame::NoFrame);
+    markerMeasureScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    markerMeasureScroll->setWidget(markerMeasurePage);
+    mainTabWidget_->addTab(markerMeasureScroll, tr("标记与测量"));
 
     layout->addWidget(mainTabWidget_, 1);
+
+    // Hidden host for file operation widgets so actions & unit tests retain object access
+    auto* fileHost = new QWidget(panel);
+    fileHost->setVisible(false);
+    auto* fileHostLayout = new QVBoxLayout(fileHost);
+    fileHostLayout->addWidget(buildFileGroup());
+    layout->addWidget(fileHost);
 
     // Pre-create telemetryDialog_ containing telemetry group so telemetry widgets always exist
     telemetryDialog_ = new QDialog(this);
