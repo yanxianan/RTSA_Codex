@@ -9,11 +9,14 @@
 #include "sources/SimulationScenarioWriter.h"
 #include "ui/UnfocusedWheelFilter.h"
 
+#include <QAction>
+#include <QActionGroup>
 #include <QCloseEvent>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialog>
 #include <QDir>
 #include <QDoubleSpinBox>
 #include <QEvent>
@@ -25,6 +28,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QKeySequence>
+#include <QMenuBar>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
@@ -34,6 +39,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -291,17 +297,14 @@ void MainWindow::refreshStatistics()
         fftSizeLabel_->setText(fftSizeCombo_->currentText());
     }
 
-    statusBar()->showMessage(
-        tr("%1 | 输入 %2 | 显示 %3 | 数据 %4 | 源丢帧 %5 | 无效 %6 | 显示跳过 %7 | 延迟 %8 | 绘制 %9 ms")
-            .arg(sourceStateLabel_->text())
-            .arg(inputRateLabel_->text())
+    if (statusMetricsLabel_) {
+        statusMetricsLabel_->setText(tr("显示: %1 | 渲染: %2 ms | 处理: %3 ms | P95延时: %4 | 队列: %5")
             .arg(displayRateLabel_->text())
-            .arg(dataRateLabel_->text())
-            .arg(sourceDropLabel_->text())
-            .arg(invalidFrameLabel_->text())
-            .arg(displaySkippedLabel_->text())
-            .arg(latencyLabel_->text())
-            .arg(plot_->lastPaintMilliseconds(), 0, 'f', 2));
+            .arg(plot_->lastPaintMilliseconds(), 0, 'f', 1)
+            .arg(pipelineStats.lastProcessingMilliseconds, 0, 'f', 2)
+            .arg(latencyP95Label_->text())
+            .arg(pipelineStats.queueDepth));
+    }
 }
 
 void MainWindow::applySourceConfiguration()
@@ -740,12 +743,140 @@ void MainWindow::handleExportFinished()
                          tr("无法导出频谱：%1").arg(result.errorMessage));
 }
 
+void MainWindow::showAboutDialog()
+{
+    QMessageBox aboutBox(this);
+    aboutBox.setWindowTitle(tr("关于 RTSA 实时频谱分析系统"));
+    aboutBox.setTextFormat(Qt::RichText);
+    aboutBox.setText(tr(
+        "<h3>RTSA 实时频谱分析仪 (Real-Time Spectrum Analyzer)</h3>"
+        "<p><b>版本：</b>v2.0 Industrial Edition</p>"
+        "<p><b>渲染引擎：</b>Qt 6 / 高性能 CPU Raster 零拷贝双缓冲</p>"
+        "<p><b>时频架构：</b>无锁环形队列 (Lock-Free SPSC) + 瀑布图时频分析 (Spectrogram)</p>"
+        "<p><b>工业标准：</b>对标 Keysight / Rohde & Schwarz / Tektronix 射频仪器规范</p>"
+        "<hr>"
+        "<p style='color: #888;'>Copyright &copy; 2026 RTSA Team. All rights reserved.</p>"
+    ));
+    aboutBox.setIcon(QMessageBox::Information);
+    aboutBox.exec();
+}
+
+void MainWindow::showTelemetryDialog()
+{
+    if (telemetryDialog_) {
+        telemetryDialog_->show();
+        telemetryDialog_->raise();
+        telemetryDialog_->activateWindow();
+    }
+}
+
+void MainWindow::buildMenuBar()
+{
+    auto* bar = menuBar();
+    bar->clear();
+
+    // 1. File Menu
+    auto* fileMenu = bar->addMenu(tr("文件 (&F)"));
+    fileMenu->addAction(tr("导出频谱 CSV (&E)..."), QKeySequence(Qt::CTRL | Qt::Key_E), this, &MainWindow::exportCsv);
+    fileMenu->addAction(tr("保存屏幕截图 (&S)..."), QKeySequence(Qt::CTRL | Qt::Key_S), this, &MainWindow::saveScreenshot);
+    if (simulationControl_) {
+        fileMenu->addAction(tr("保存模拟场景 (&C)..."), this, &MainWindow::saveSimulationScenario);
+    }
+    fileMenu->addSeparator();
+    fileMenu->addAction(tr("退出 (&X)"), QKeySequence(Qt::ALT | Qt::Key_F4), this, &QWidget::close);
+
+    // 2. View Menu
+    auto* viewMenu = bar->addMenu(tr("视图 (&V)"));
+    auto* viewModeGroup = new QActionGroup(this);
+
+    auto* spectrumOnlyAction = viewMenu->addAction(tr("仅频谱图 (Spectrum Only)"), [this] {
+        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(0);
+    });
+    spectrumOnlyAction->setCheckable(true);
+    viewModeGroup->addAction(spectrumOnlyAction);
+
+    auto* waterfallOnlyAction = viewMenu->addAction(tr("仅瀑布图 (Waterfall Only)"), [this] {
+        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(1);
+    });
+    waterfallOnlyAction->setCheckable(true);
+    viewModeGroup->addAction(waterfallOnlyAction);
+
+    auto* dualViewAction = viewMenu->addAction(tr("双视图分屏 (Dual View)"), [this] {
+        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(2);
+    });
+    dualViewAction->setCheckable(true);
+    dualViewAction->setChecked(true);
+    viewModeGroup->addAction(dualViewAction);
+
+    viewMenu->addSeparator();
+    viewMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
+    viewMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
+
+    // 3. Control Menu
+    auto* controlMenu = bar->addMenu(tr("控制 (&C)"));
+    controlMenu->addAction(tr("开始采集 (&Start)"), QKeySequence(Qt::Key_F5), this, &MainWindow::startAcquisition);
+    controlMenu->addAction(tr("暂停采集 (&Pause)"), QKeySequence(Qt::Key_F6), this, &MainWindow::pauseAcquisition);
+    controlMenu->addAction(tr("单次扫描 (&Single)"), QKeySequence(Qt::Key_F7), this, &MainWindow::singleAcquisition);
+    controlMenu->addAction(tr("停止采集 (&Stop)"), QKeySequence(Qt::Key_F8), this, &MainWindow::stopAcquisition);
+    controlMenu->addSeparator();
+    controlMenu->addAction(tr("重置频率范围 (&Reset Span)"), QKeySequence(Qt::CTRL | Qt::Key_0), this, &MainWindow::resetFrequencyRange);
+    controlMenu->addAction(tr("重置迹线平均 (&Reset Trace)"), [this] {
+        if (resetTraceButton_) resetTraceButton_->click();
+    });
+    controlMenu->addAction(tr("清空瀑布图历史 (&Clear Waterfall)"), [this] {
+        if (waterfallClearButton_) waterfallClearButton_->click();
+    });
+
+    // 4. Measure Menu
+    auto* measureMenu = bar->addMenu(tr("测量 (&M)"));
+    auto* peakAct = measureMenu->addAction(tr("峰值搜索 (Peak Search)"), [this] {
+        if (peakButton_) peakButton_->click();
+    });
+    peakAct->setShortcut(QKeySequence(Qt::Key_M));
+    measureMenu->addAction(tr("下一个峰值 (Next Peak)"), [this] {
+        if (nextPeakButton_) nextPeakButton_->click();
+    });
+    measureMenu->addAction(tr("上一个峰值 (Prev Peak)"), [this] {
+        if (previousPeakButton_) previousPeakButton_->click();
+    });
+    measureMenu->addSeparator();
+    measureMenu->addAction(tr("选段峰值测量 (Range Peak)"), this, &MainWindow::measureRangePeak);
+    measureMenu->addAction(tr("信道功率积分 (Channel Power)"), this, &MainWindow::measureChannelPower);
+
+    // 5. System Menu
+    auto* sysMenu = bar->addMenu(tr("系统 (&S)"));
+    sysMenu->addAction(tr("实时引擎遥测监控 (&Telemetry)..."), this, &MainWindow::showTelemetryDialog);
+    sysMenu->addSeparator();
+    sysMenu->addAction(tr("关于 RTSA 频谱仪 (&About)..."), this, &MainWindow::showAboutDialog);
+}
+
+void MainWindow::buildStatusBar()
+{
+    auto* bar = statusBar();
+    bar->setSizeGripEnabled(false);
+
+    statusStateChip_ = new QLabel(this);
+    statusStateChip_->setObjectName(QStringLiteral("statusStateChip"));
+    statusStateChip_->setStyleSheet(
+        QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #263238; color: #b0bec5; }"));
+    statusStateChip_->setText(tr("【■ 已停止】"));
+    bar->addWidget(statusStateChip_);
+
+    statusMetricsLabel_ = new QLabel(this);
+    statusMetricsLabel_->setObjectName(QStringLiteral("statusMetrics"));
+    statusMetricsLabel_->setStyleSheet(QStringLiteral("QLabel { color: #90a4ae; font-family: monospace; font-size: 11px; }"));
+    bar->addPermanentWidget(statusMetricsLabel_);
+}
+
 void MainWindow::buildUi()
 {
+    buildMenuBar();
+    buildStatusBar();
+
     auto* central = new QWidget(this);
     auto* layout = new QHBoxLayout(central);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
 
     plotSplitter_ = new QSplitter(Qt::Vertical, central);
     plotSplitter_->setObjectName(QStringLiteral("plotSplitter"));
@@ -770,33 +901,149 @@ void MainWindow::buildUi()
 
 QWidget* MainWindow::buildControlPanel()
 {
-    auto* panel = new QWidget;
+    auto* panel = new QWidget(this);
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(8);
-    layout->addWidget(buildSourceGroup());
+    layout->setSpacing(6);
+
+    // 1. Top Instrument Acquisition Control Bar (Keysight/R&S style)
+    auto* acqBox = new QGroupBox(tr("仪器采集控制 (Acquisition)"), panel);
+    auto* acqLayout = new QGridLayout(acqBox);
+    acqLayout->setContentsMargins(6, 6, 6, 6);
+    acqLayout->setSpacing(4);
+
+    startButton_ = new QPushButton(tr("▶ 开始/继续"), acqBox);
+    startButton_->setObjectName(QStringLiteral("startButton"));
+
+    pauseButton_ = new QPushButton(tr("❚❚ 暂停"), acqBox);
+    pauseButton_->setObjectName(QStringLiteral("pauseButton"));
+
+    stopButton_ = new QPushButton(tr("■ 停止"), acqBox);
+    stopButton_->setObjectName(QStringLiteral("stopButton"));
+
+    singleButton_ = new QPushButton(tr("● 单次"), acqBox);
+    singleButton_->setObjectName(QStringLiteral("singleButton"));
+
+    acqLayout->addWidget(startButton_, 0, 0);
+    acqLayout->addWidget(pauseButton_, 0, 1);
+    acqLayout->addWidget(stopButton_, 1, 0);
+    acqLayout->addWidget(singleButton_, 1, 1);
+    layout->addWidget(acqBox);
+
+    // 2. Tab Widget with 6 Industrial Category Pages
+    mainTabWidget_ = new QTabWidget(panel);
+    mainTabWidget_->setObjectName(QStringLiteral("mainTabWidget"));
+
+    // Tab 1: 频率与信号 (Freq & Source)
+    auto* sourcePage = new QWidget;
+    auto* sourceLayout = new QVBoxLayout(sourcePage);
+    sourceLayout->setContentsMargins(2, 4, 2, 4);
+    sourceLayout->setSpacing(6);
+    sourceLayout->addWidget(buildSourceGroup());
     if (simulationControl_) {
-        layout->addWidget(buildSimulationGroup());
+        sourceLayout->addWidget(buildSimulationGroup());
     }
-    layout->addWidget(buildDisplayGroup());
-    layout->addWidget(buildWaterfallGroup());
-    layout->addWidget(buildTraceGroup());
-    layout->addWidget(buildMarkerGroup());
-    layout->addWidget(buildMeasurementGroup());
-    layout->addWidget(buildFileGroup());
-    layout->addWidget(buildTelemetryGroup());
-    layout->addStretch(1);
+    sourceLayout->addStretch(1);
 
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scrollArea->setFixedWidth(330);
-    scrollArea->setWidget(panel);
+    auto* sourceScroll = new QScrollArea;
+    sourceScroll->setWidgetResizable(true);
+    sourceScroll->setFrameShape(QFrame::NoFrame);
+    sourceScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    sourceScroll->setWidget(sourcePage);
+    mainTabWidget_->addTab(sourceScroll, tr("频率/信号"));
 
+    // Tab 2: 幅度与刻度 (Amp & Scale)
+    auto* ampPage = new QWidget;
+    auto* ampLayout = new QVBoxLayout(ampPage);
+    ampLayout->setContentsMargins(2, 4, 2, 4);
+    ampLayout->setSpacing(6);
+    ampLayout->addWidget(buildDisplayGroup());
+    ampLayout->addStretch(1);
+
+    auto* ampScroll = new QScrollArea;
+    ampScroll->setWidgetResizable(true);
+    ampScroll->setFrameShape(QFrame::NoFrame);
+    ampScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    ampScroll->setWidget(ampPage);
+    mainTabWidget_->addTab(ampScroll, tr("幅度/刻度"));
+
+    // Tab 3: 迹线与瀑布 (Trace & Waterfall)
+    auto* traceViewPage = new QWidget;
+    auto* traceViewLayout = new QVBoxLayout(traceViewPage);
+    traceViewLayout->setContentsMargins(2, 4, 2, 4);
+    traceViewLayout->setSpacing(6);
+    traceViewLayout->addWidget(buildTraceGroup());
+    traceViewLayout->addWidget(buildWaterfallGroup());
+    traceViewLayout->addStretch(1);
+
+    auto* traceViewScroll = new QScrollArea;
+    traceViewScroll->setWidgetResizable(true);
+    traceViewScroll->setFrameShape(QFrame::NoFrame);
+    traceViewScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    traceViewScroll->setWidget(traceViewPage);
+    mainTabWidget_->addTab(traceViewScroll, tr("迹线/瀑布"));
+
+    // Tab 4: 标记搜索 (Markers)
+    auto* markerPage = new QWidget;
+    auto* markerLayout = new QVBoxLayout(markerPage);
+    markerLayout->setContentsMargins(2, 4, 2, 4);
+    markerLayout->setSpacing(6);
+    markerLayout->addWidget(buildMarkerGroup());
+    markerLayout->addStretch(1);
+
+    auto* markerScroll = new QScrollArea;
+    markerScroll->setWidgetResizable(true);
+    markerScroll->setFrameShape(QFrame::NoFrame);
+    markerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    markerScroll->setWidget(markerPage);
+    mainTabWidget_->addTab(markerScroll, tr("标记"));
+
+    // Tab 5: 功率测量 (Measurement)
+    auto* measurePage = new QWidget;
+    auto* measureLayout = new QVBoxLayout(measurePage);
+    measureLayout->setContentsMargins(2, 4, 2, 4);
+    measureLayout->setSpacing(6);
+    measureLayout->addWidget(buildMeasurementGroup());
+    measureLayout->addStretch(1);
+
+    auto* measureScroll = new QScrollArea;
+    measureScroll->setWidgetResizable(true);
+    measureScroll->setFrameShape(QFrame::NoFrame);
+    measureScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    measureScroll->setWidget(measurePage);
+    mainTabWidget_->addTab(measureScroll, tr("测量"));
+
+    // Tab 6: 场景与文件 (Files & Scenario)
+    auto* filePage = new QWidget;
+    auto* fileLayout = new QVBoxLayout(filePage);
+    fileLayout->setContentsMargins(2, 4, 2, 4);
+    fileLayout->setSpacing(6);
+    fileLayout->addWidget(buildFileGroup());
+    fileLayout->addStretch(1);
+
+    auto* fileScroll = new QScrollArea;
+    fileScroll->setWidgetResizable(true);
+    fileScroll->setFrameShape(QFrame::NoFrame);
+    fileScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    fileScroll->setWidget(filePage);
+    mainTabWidget_->addTab(fileScroll, tr("场景/文件"));
+
+    layout->addWidget(mainTabWidget_, 1);
+
+    // Pre-create telemetryDialog_ containing telemetry group so telemetry widgets always exist
+    telemetryDialog_ = new QDialog(this);
+    telemetryDialog_->setObjectName(QStringLiteral("telemetryDialog"));
+    telemetryDialog_->setWindowTitle(tr("RTSA 引擎实时遥测监控"));
+    telemetryDialog_->resize(420, 520);
+    auto* dlgLayout = new QVBoxLayout(telemetryDialog_);
+    dlgLayout->addWidget(buildTelemetryGroup());
+    auto* closeBtn = new QPushButton(tr("关闭"), telemetryDialog_);
+    connect(closeBtn, &QPushButton::clicked, telemetryDialog_, &QDialog::accept);
+    dlgLayout->addWidget(closeBtn);
+
+    panel->setFixedWidth(340);
     UnfocusedWheelFilter::installRecursively(panel);
-
-    return scrollArea;
+    return panel;
 }
 
 QWidget* MainWindow::buildSourceGroup()
@@ -860,18 +1107,6 @@ QWidget* MainWindow::buildSourceGroup()
     form->addRow(tr("输入帧率"), sourceFrameRateSpin_);
     form->addRow(tr("噪声底"), noiseFloorSpin_);
 
-    auto* buttons = new QWidget(group);
-    auto* buttonLayout = new QGridLayout(buttons);
-    buttonLayout->setContentsMargins(0, 4, 0, 0);
-    startButton_ = new QPushButton(tr("开始/继续"), buttons);
-    pauseButton_ = new QPushButton(tr("暂停"), buttons);
-    stopButton_ = new QPushButton(tr("停止"), buttons);
-    singleButton_ = new QPushButton(tr("单次"), buttons);
-    buttonLayout->addWidget(startButton_, 0, 0, 1, 2);
-    buttonLayout->addWidget(pauseButton_, 1, 0);
-    buttonLayout->addWidget(stopButton_, 1, 1);
-    buttonLayout->addWidget(singleButton_, 2, 0, 1, 2);
-    form->addRow(buttons);
     return group;
 }
 
@@ -1627,6 +1862,32 @@ void MainWindow::updateButtonStates(const SourceState state)
     pauseButton_->setEnabled(running);
     stopButton_->setEnabled(running || paused);
     singleButton_->setEnabled(startable || paused);
+
+    if (statusStateChip_) {
+        switch (state) {
+        case SourceState::Running:
+        case SourceState::Starting:
+            statusStateChip_->setText(tr("【● 运行中】"));
+            statusStateChip_->setStyleSheet(
+                QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #1b5e20; color: #a5d6a7; border: 1px solid #2e7d32; }"));
+            break;
+        case SourceState::Paused:
+            statusStateChip_->setText(tr("【❚❚ 已暂停】"));
+            statusStateChip_->setStyleSheet(
+                QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #e65100; color: #ffe0b2; border: 1px solid #ef6c00; }"));
+            break;
+        case SourceState::Error:
+            statusStateChip_->setText(tr("【⚠ 异常】"));
+            statusStateChip_->setStyleSheet(
+                QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #b71c1c; color: #ffcdd2; border: 1px solid #c62828; }"));
+            break;
+        default:
+            statusStateChip_->setText(tr("【■ 已停止】"));
+            statusStateChip_->setStyleSheet(
+                QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #263238; color: #b0bec5; border: 1px solid #37474f; }"));
+            break;
+        }
+    }
 }
 
 SimulationConfig MainWindow::configurationFromUi() const

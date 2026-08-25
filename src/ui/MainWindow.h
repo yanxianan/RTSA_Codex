@@ -15,12 +15,14 @@
 class QComboBox;
 class QCheckBox;
 class QCloseEvent;
+class QDialog;
 class QEvent;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
 class QSplitter;
+class QTabWidget;
 class QTimer;
 
 namespace rtsa {
@@ -74,6 +76,8 @@ private slots:
     void saveSimulationScenario();
     void exportCsv();
     void handleExportFinished();
+    void showAboutDialog();
+    void showTelemetryDialog();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -81,6 +85,8 @@ protected:
 
 private:
     void buildUi();
+    void buildMenuBar();
+    void buildStatusBar();
     QWidget* buildControlPanel();
     QWidget* buildSourceGroup();
     QWidget* buildDisplayGroup();
@@ -194,6 +200,10 @@ private:
     QLabel* renderTimeLabel_ = nullptr;
     QLabel* queueDepthLabel_ = nullptr;
     QLabel* fileOperationLabel_ = nullptr;
+    QLabel* statusStateChip_ = nullptr;
+    QLabel* statusMetricsLabel_ = nullptr;
+    QTabWidget* mainTabWidget_ = nullptr;
+    QDialog* telemetryDialog_ = nullptr;
 
     QFutureWatcher<ExportResult>* exportWatcher_ = nullptr;
     bool settingsEnabled_ = true;

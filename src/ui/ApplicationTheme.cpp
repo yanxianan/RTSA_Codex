@@ -74,6 +74,22 @@ void applyApplicationTheme(QApplication& application)
         application.setStyle(fusionStyle);
     }
     application.setPalette(createApplicationPalette());
+    application.setStyleSheet(QStringLiteral(
+        "QTabWidget::pane { border: 1px solid #37474f; top: -1px; background: #151a21; }"
+        "QTabBar::tab { background: #212936; color: #b0bec5; border: 1px solid #37474f; padding: 6px 10px; font-weight: bold; font-size: 11px; margin-right: 2px; border-top-left-radius: 3px; border-top-right-radius: 3px; }"
+        "QTabBar::tab:selected { background: #263238; color: #00e676; border-bottom-color: #151a21; border-top: 2px solid #00e676; }"
+        "QTabBar::tab:hover:!selected { background: #2c3848; color: #eceff1; }"
+        "QMenuBar { background-color: #141920; color: #e6edf3; border-bottom: 1px solid #2d3748; font-size: 12px; }"
+        "QMenuBar::item { padding: 4px 10px; background: transparent; }"
+        "QMenuBar::item:selected { background-color: #1e88e5; color: #ffffff; border-radius: 2px; }"
+        "QMenu { background-color: #1a222d; color: #e6edf3; border: 1px solid #37474f; padding: 4px; }"
+        "QMenu::item { padding: 6px 24px 6px 12px; border-radius: 2px; }"
+        "QMenu::item:selected { background-color: #1e88e5; color: #ffffff; }"
+        "QMenu::separator { height: 1px; background: #37474f; margin: 4px 6px; }"
+        "QStatusBar { background: #141920; border-top: 1px solid #263238; color: #90a4ae; font-size: 11px; }"
+        "QGroupBox { font-weight: bold; border: 1px solid #37474f; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
+        "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 8px; padding: 0 4px; color: #81d4fa; }"
+    ));
 }
 
 } // namespace rtsa
