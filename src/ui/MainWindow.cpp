@@ -743,6 +743,63 @@ void MainWindow::handleExportFinished()
                          tr("无法导出频谱：%1").arg(result.errorMessage));
 }
 
+void MainWindow::showShortcutsDialog()
+{
+    QMessageBox box(this);
+    box.setWindowTitle(tr("快捷键说明"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(tr(
+        "<h3>⌨️ RTSA 快捷键参考</h3>"
+        "<table border='0' cellpadding='4' cellspacing='0' style='font-size: 12px; color: #cfd8dc;'>"
+        "<tr><td><b>F5</b></td><td>开始 / 继续连续采集</td></tr>"
+        "<tr><td><b>F6</b></td><td>暂停采集</td></tr>"
+        "<tr><td><b>F7</b></td><td>单次扫描采集</td></tr>"
+        "<tr><td><b>F8</b></td><td>停止采集</td></tr>"
+        "<tr><td><b>F11</b></td><td>全屏模式切换 (ESC 退出)</td></tr>"
+        "<tr><td><b>Ctrl + R</b></td><td>自动幅度刻度 (Auto Range)</td></tr>"
+        "<tr><td><b>Ctrl + 0</b></td><td>重置频率范围 (Reset Span)</td></tr>"
+        "<tr><td><b>M</b></td><td>活动标记峰值搜索 (Peak Search)</td></tr>"
+        "<tr><td><b>Ctrl + E</b></td><td>导出当前频谱为 CSV 数据</td></tr>"
+        "<tr><td><b>Ctrl + S</b></td><td>保存当前频谱分析仪截图</td></tr>"
+        "<tr><td><b>Alt + F4</b></td><td>退出软件</td></tr>"
+        "</table>"
+        "<hr>"
+        "<h4>🖱️ 鼠标与手势交互</h4>"
+        "<ul>"
+        "<li><b>滚轮滚动</b>：以鼠标所在频点为中心缩放 Span</li>"
+        "<li><b>左键拖拽</b>：平移中心频率 (Pan)</li>"
+        "<li><b>左键框选</b>：局部放大选中频段与幅度矩形</li>"
+        "<li><b>双击画布</b>：重置频率范围与幅度刻度</li>"
+        "</ul>"
+    ));
+    box.setIcon(QMessageBox::Information);
+    box.exec();
+}
+
+void MainWindow::showUserGuideDialog()
+{
+    QMessageBox box(this);
+    box.setWindowTitle(tr("RTSA 实时频谱分析仪操作指南"));
+    box.setTextFormat(Qt::RichText);
+    box.setText(tr(
+        "<h3>📖 RTSA 快速操作指南</h3>"
+        "<ol style='font-size: 12px; line-height: 1.6; color: #cfd8dc;'>"
+        "<li><b>数据源与频率设置</b>：<br>"
+        "在【频率与幅度】选项卡中设置中心频率、Span 频宽、FFT 频点数与输入帧率。支持通过滚轮或键盘微调，未聚焦时滚轮不误触。</li>"
+        "<li><b>幅度与坐标刻度</b>：<br>"
+        "设置参考电平 (Ref Level)、底电平 (Bottom Level) 或直接使用 <code>Ctrl+R</code> 自动适配最佳动态范围。</li>"
+        "<li><b>时频瀑布图分析</b>：<br>"
+        "在【迹线与瀑布】中可切换频谱、瀑布图或双屏联动。瀑布图严格按时间自顶向底连续流动，支持 ClassicRainbow、R&S、Ironbow 等专业色谱。</li>"
+        "<li><b>标记与差分测量</b>：<br>"
+        "在【标记与测量】中支持 M1~M4 四组标记与 Delta 差分模式，按 <code>M</code> 键快速锁定最高峰值。</li>"
+        "<li><b>信道功率与选段分析</b>：<br>"
+        "设定测量起始与终止频点，点击“区间峰值”或“信道功率”实时计算选段总积分功率。</li>"
+        "</ol>"
+    ));
+    box.setIcon(QMessageBox::Information);
+    box.exec();
+}
+
 void MainWindow::showAboutDialog()
 {
     QMessageBox aboutBox(this);
@@ -752,7 +809,7 @@ void MainWindow::showAboutDialog()
         "<h3>RTSA 实时频谱分析仪 (Real-Time Spectrum Analyzer)</h3>"
         "<p><b>版本：</b>v2.0 Industrial Edition</p>"
         "<p><b>渲染引擎：</b>Qt 6 / 高性能 CPU Raster 零拷贝双缓冲</p>"
-        "<p><b>时频架构：</b>无锁环形队列 (Lock-Free SPSC) + 瀑布图时频分析 (Spectrogram)</p>"
+        "<p><b>时频架构：</b>无锁环形队列 (Lock-Free SPSC) + 连续瀑布图谱 (Spectrogram)</p>"
         "<p><b>工业标准：</b>对标 Keysight / Rohde & Schwarz / Tektronix 射频仪器规范</p>"
         "<hr>"
         "<p style='color: #888;'>Copyright &copy; 2026 RTSA Team. All rights reserved.</p>"
@@ -812,11 +869,12 @@ void MainWindow::buildMenuBar()
     viewMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
     viewMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
 
-    // 3. System Menu
-    auto* sysMenu = bar->addMenu(tr("系统 (&S)"));
-    sysMenu->addAction(tr("实时引擎遥测监控 (&Telemetry)..."), this, &MainWindow::showTelemetryDialog);
-    sysMenu->addSeparator();
-    sysMenu->addAction(tr("关于 RTSA 频谱仪 (&About)..."), this, &MainWindow::showAboutDialog);
+    // 3. Help Menu
+    auto* helpMenu = bar->addMenu(tr("帮助 (&H)"));
+    helpMenu->addAction(tr("快捷键设置 (&S)..."), this, &MainWindow::showShortcutsDialog);
+    helpMenu->addAction(tr("操作指南 (&G)..."), this, &MainWindow::showUserGuideDialog);
+    helpMenu->addSeparator();
+    helpMenu->addAction(tr("关于软件 (&A)..."), this, &MainWindow::showAboutDialog);
 }
 
 void MainWindow::buildStatusBar()
@@ -875,26 +933,56 @@ QWidget* MainWindow::buildControlPanel()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
 
-    // 1. Top Instrument Acquisition Control Bar (Keysight/R&S style)
-    auto* acqBox = new QGroupBox(tr("仪器采集控制 (Acquisition)"), panel);
+    // 1. Top Instrument Acquisition Control Bar (Styled exactly per screenshot)
+    auto* acqBox = new QGroupBox(tr("采集控制"), panel);
     auto* acqLayout = new QGridLayout(acqBox);
-    acqLayout->setContentsMargins(6, 6, 6, 6);
-    acqLayout->setSpacing(4);
+    acqLayout->setContentsMargins(6, 8, 6, 6);
+    acqLayout->setSpacing(6);
 
-    startButton_ = new QPushButton(tr("▶ 开始/继续"), acqBox);
+    startButton_ = new QPushButton(tr("▶  开始 / 连续"), acqBox);
     startButton_->setObjectName(QStringLiteral("startButton"));
+    startButton_->setMinimumHeight(38);
+    startButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { "
+        "  font-size: 13px; font-weight: bold; color: #00e676; "
+        "  background-color: #0d2315; border: 1.5px solid #00e676; "
+        "  border-radius: 3px; padding: 6px 12px; "
+        "} "
+        "QPushButton:hover { background-color: #153822; border-color: #69f0ae; color: #69f0ae; } "
+        "QPushButton:pressed { background-color: #1f4f30; } "
+        "QPushButton:disabled { color: #5a7364; border-color: #2e4737; background-color: #121c15; }"));
+
+    stopButton_ = new QPushButton(tr("■  停止"), acqBox);
+    stopButton_->setObjectName(QStringLiteral("stopButton"));
+    stopButton_->setMinimumHeight(32);
+    stopButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { "
+        "  font-size: 12px; font-weight: bold; color: #cfd8dc; "
+        "  background-color: #1e2631; border: 1px solid #37474f; "
+        "  border-radius: 3px; padding: 4px 8px; "
+        "} "
+        "QPushButton:hover { background-color: #2b3644; border-color: #546e7a; color: #eceff1; } "
+        "QPushButton:pressed { background-color: #161c24; } "
+        "QPushButton:disabled { color: #607d8b; border-color: #263238; background-color: #161c22; }"));
+
+    singleButton_ = new QPushButton(tr("○  单次"), acqBox);
+    singleButton_->setObjectName(QStringLiteral("singleButton"));
+    singleButton_->setMinimumHeight(32);
+    singleButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { "
+        "  font-size: 12px; font-weight: bold; color: #cfd8dc; "
+        "  background-color: #1e2631; border: 1px solid #37474f; "
+        "  border-radius: 3px; padding: 4px 8px; "
+        "} "
+        "QPushButton:hover { background-color: #2b3644; border-color: #546e7a; color: #eceff1; } "
+        "QPushButton:pressed { background-color: #161c24; } "
+        "QPushButton:disabled { color: #607d8b; border-color: #263238; background-color: #161c22; }"));
 
     pauseButton_ = new QPushButton(tr("❚❚ 暂停"), acqBox);
     pauseButton_->setObjectName(QStringLiteral("pauseButton"));
+    pauseButton_->setVisible(false);
 
-    stopButton_ = new QPushButton(tr("■ 停止"), acqBox);
-    stopButton_->setObjectName(QStringLiteral("stopButton"));
-
-    singleButton_ = new QPushButton(tr("● 单次"), acqBox);
-    singleButton_->setObjectName(QStringLiteral("singleButton"));
-
-    acqLayout->addWidget(startButton_, 0, 0);
-    acqLayout->addWidget(pauseButton_, 0, 1);
+    acqLayout->addWidget(startButton_, 0, 0, 1, 2);
     acqLayout->addWidget(stopButton_, 1, 0);
     acqLayout->addWidget(singleButton_, 1, 1);
     layout->addWidget(acqBox);

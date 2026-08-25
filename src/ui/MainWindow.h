@@ -77,6 +77,8 @@ private slots:
     void exportCsv();
     void handleExportFinished();
     void showAboutDialog();
+    void showShortcutsDialog();
+    void showUserGuideDialog();
     void showTelemetryDialog();
 
 protected:
