@@ -47,8 +47,8 @@ void SettingsTests::validSettingsRoundTrip()
     expected.unthrottled = true;
     expected.tone1Enabled = false;
     expected.tone1FrequencyMHz = 987.5;
-    expected.tone1WidthBins = 4.5;
-    expected.tone2WidthBins = 6.5;
+    expected.tone1WidthMHz = 4.5;
+    expected.tone2WidthMHz = 6.5;
     expected.sweepStartFrequencyMHz = 970.0;
     expected.sweepStopFrequencyMHz = 1025.0;
     expected.sweepPeriodSeconds = 7.5;
@@ -77,8 +77,8 @@ void SettingsTests::validSettingsRoundTrip()
     QCOMPARE(loaded.settings.waterfallHistoryDepth, expected.waterfallHistoryDepth);
     QCOMPARE(loaded.settings.tone1Enabled, expected.tone1Enabled);
     QCOMPARE(loaded.settings.tone1FrequencyMHz, expected.tone1FrequencyMHz);
-    QCOMPARE(loaded.settings.tone1WidthBins, expected.tone1WidthBins);
-    QCOMPARE(loaded.settings.tone2WidthBins, expected.tone2WidthBins);
+    QCOMPARE(loaded.settings.tone1WidthMHz, expected.tone1WidthMHz);
+    QCOMPARE(loaded.settings.tone2WidthMHz, expected.tone2WidthMHz);
     QCOMPARE(loaded.settings.sweepStartFrequencyMHz, expected.sweepStartFrequencyMHz);
     QCOMPARE(loaded.settings.sweepStopFrequencyMHz, expected.sweepStopFrequencyMHz);
     QCOMPARE(loaded.settings.unthrottled, expected.unthrottled);
@@ -158,7 +158,7 @@ void SettingsTests::versionOneSettingsAreMigrated()
     QCOMPARE(result.settings.sweepPeriodSeconds, 2.5);
     QCOMPARE(result.settings.sweepDirection, 0);
     QCOMPARE(result.settings.transientDurationSeconds, 0.1);
-    QCOMPARE(result.settings.tone1WidthBins, 1.5);
+    QCOMPARE(result.settings.tone1WidthMHz, 1.5);
     QCOMPARE(result.settings.sweepStartFrequencyMHz, 930.0);
 }
 
@@ -181,7 +181,7 @@ void SettingsTests::versionTwoSettingsAreMigrated()
     QCOMPARE(result.settings.sweepDirection, 1);
     QCOMPARE(result.settings.transientDurationSeconds, 0.75);
     QCOMPARE(result.settings.unthrottled, false);
-    QCOMPARE(result.settings.tone2WidthBins, 2.5);
+    QCOMPARE(result.settings.tone2WidthMHz, 2.5);
     QCOMPARE(result.settings.sweepStopFrequencyMHz, 1070.0);
 }
 

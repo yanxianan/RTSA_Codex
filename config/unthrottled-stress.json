@@ -15,7 +15,7 @@
         "enabled": true,
         "frequencyHz": 1010000000,
         "amplitudeDbfs": -20,
-        "widthBins": 1
+        "widthHz": 1000000
       }
     ],
     "sweep": {

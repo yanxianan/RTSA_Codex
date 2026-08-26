@@ -274,12 +274,25 @@ bool parseSimulation(const QJsonObject& object,
                         QStringLiteral("必须小于显示终止频率。"));
         }
         tone.amplitudeDbfs = static_cast<float>(number);
-        if (!readNumber(toneObject, QStringLiteral("widthBins"),
-                        prefix + QStringLiteral(".widthBins"),
-                        0.1, 1024.0, number, error)) {
-            return false;
+        if (toneObject.contains(QStringLiteral("widthHz"))) {
+            if (!readNumber(toneObject, QStringLiteral("widthHz"),
+                            prefix + QStringLiteral(".widthHz"),
+                            1.0, 100.0e9, number, error)) {
+                return false;
+            }
+            tone.widthHz = number;
+        } else if (toneObject.contains(QStringLiteral("widthBins"))) {
+            if (!readNumber(toneObject, QStringLiteral("widthBins"),
+                            prefix + QStringLiteral(".widthBins"),
+                            0.01, 100000.0, number, error)) {
+                return false;
+            }
+            const double binResolution = config.spanHz / static_cast<double>(config.binCount);
+            tone.widthHz = std::max(1.0, number * binResolution);
+        } else {
+            return fail(error, prefix + QStringLiteral(".widthHz"),
+                        QStringLiteral("缺少 'widthHz' 字段。"));
         }
-        tone.widthBins = static_cast<float>(number);
         config.tones.push_back(tone);
     }
 

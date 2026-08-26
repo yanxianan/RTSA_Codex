@@ -21,11 +21,11 @@ struct AppSettings {
     bool tone1Enabled = true;
     double tone1FrequencyMHz = 980.0;
     double tone1AmplitudeDbfs = -35.0;
-    double tone1WidthBins = 1.5;
+    double tone1WidthMHz = 1.5;
     bool tone2Enabled = true;
     double tone2FrequencyMHz = 1035.0;
     double tone2AmplitudeDbfs = -18.0;
-    double tone2WidthBins = 2.5;
+    double tone2WidthMHz = 2.5;
     bool sweepEnabled = true;
     double sweepStartFrequencyMHz = 930.0;
     double sweepStopFrequencyMHz = 1070.0;

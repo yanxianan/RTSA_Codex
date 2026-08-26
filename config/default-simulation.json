@@ -15,13 +15,13 @@
         "enabled": true,
         "frequencyHz": 980000000,
         "amplitudeDbfs": -35,
-        "widthBins": 1.5
+        "widthHz": 1500000
       },
       {
         "enabled": true,
         "frequencyHz": 1035000000,
         "amplitudeDbfs": -18,
-        "widthBins": 2.5
+        "widthHz": 2500000
       }
     ],
     "sweep": {

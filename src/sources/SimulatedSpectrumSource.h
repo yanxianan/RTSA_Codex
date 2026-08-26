@@ -45,7 +45,7 @@ private:
                         const SimulationConfig& config,
                         double frequencyHz,
                         float amplitudeDbfs,
-                        float widthBins);
+                        double widthHz);
     std::uint32_t nextRandom() noexcept;
     float nextUniform() noexcept;
     float nextUnitNoise() noexcept;

@@ -407,7 +407,7 @@ SpectrumFramePtr SimulatedSpectrumSource::generateFrame(const SimulationConfig& 
                     config,
                     tone.frequencyHz,
                     tone.amplitudeDbfs,
-                    tone.widthBins);
+                    tone.widthHz);
         }
     }
 
@@ -428,7 +428,7 @@ SpectrumFramePtr SimulatedSpectrumSource::generateFrame(const SimulationConfig& 
         }
         const double sweepFrequency = config.sweepStartHz
             + (config.sweepStopHz - config.sweepStartHz) * position;
-        addTone(frame->bins, config, sweepFrequency, config.sweepAmplitudeDbfs, 1.5F);
+        addTone(frame->bins, config, sweepFrequency, config.sweepAmplitudeDbfs, 1.5e6);
     }
 
     bool transientActive = elapsedSeconds < activeTransientUntilSeconds_;
@@ -443,7 +443,7 @@ SpectrumFramePtr SimulatedSpectrumSource::generateFrame(const SimulationConfig& 
                 config,
                 activeTransientFrequencyHz_,
                 config.transientAmplitudeDbfs,
-                1.0F);
+                1.0e6);
         frame->metadata.flags |= SpectrumFrameTransient;
     }
 
@@ -481,7 +481,7 @@ void SimulatedSpectrumSource::addTone(std::vector<float>& bins,
                                       const SimulationConfig& config,
                                       const double frequencyHz,
                                       const float amplitudeDbfs,
-                                      const float widthBins)
+                                      const double widthHz)
 {
     if (bins.empty() || config.spanHz <= 0.0) {
         return;
@@ -498,7 +498,11 @@ void SimulatedSpectrumSource::addTone(std::vector<float>& bins,
     metadata.spanHz = config.spanHz;
     metadata.binCount = static_cast<std::uint32_t>(bins.size());
     const std::size_t centerBin = FrequencyMapper::nearestBinForFrequency(metadata, frequencyHz);
-    const float sigma = std::max(0.5F, widthBins);
+    const double binResolutionHz = config.spanHz / static_cast<double>(bins.size());
+    const float sigmaBins = (binResolutionHz > 0.0 && widthHz > 0.0)
+        ? static_cast<float>(widthHz / binResolutionHz)
+        : 1.0F;
+    const float sigma = std::max(0.5F, sigmaBins);
     const std::size_t radius = static_cast<std::size_t>(std::ceil(sigma * 6.0F));
     const std::size_t begin = centerBin > radius ? centerBin - radius : 0;
     const std::size_t end = std::min(bins.size(), centerBin + radius + 1U);

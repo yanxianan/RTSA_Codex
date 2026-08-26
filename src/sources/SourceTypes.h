@@ -30,7 +30,7 @@ struct ToneConfig {
     bool enabled = true;
     double frequencyHz = 1.01e9;
     float amplitudeDbfs = -20.0F;
-    float widthBins = 2.0F;
+    double widthHz = 1.5e6;
 };
 
 struct SimulationFaultConfig {
@@ -53,8 +53,8 @@ struct SimulationConfig {
     float noiseDeviationDb = 1.5F;
     std::uint32_t randomSeed = 0x47D2023U;
     std::vector<ToneConfig> tones {
-        ToneConfig { true, 980.0e6, -35.0F, 1.5F },
-        ToneConfig { true, 1.035e9, -18.0F, 2.5F }
+        ToneConfig { true, 980.0e6, -35.0F, 1.5e6 },
+        ToneConfig { true, 1.035e9, -18.0F, 2.5e6 }
     };
     bool sweepEnabled = true;
     double sweepStartHz = 940.0e6;

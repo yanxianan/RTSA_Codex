@@ -365,8 +365,8 @@ void MainWindowTests::initialScenarioPopulatesControlsAndSource()
     scenario.noiseDeviationDb = 0.75F;
     scenario.randomSeed = 12345U;
     scenario.tones = {
-        ToneConfig { true, 2.39e9, -30.0F, 4.5F },
-        ToneConfig { false, 2.42e9, -15.0F, 6.5F }
+        ToneConfig { true, 2.39e9, -30.0F, 4.5e6 },
+        ToneConfig { false, 2.42e9, -15.0F, 6.5e6 }
     };
     scenario.sweepEnabled = true;
     scenario.sweepStartHz = 2.37e9;
@@ -381,7 +381,7 @@ void MainWindowTests::initialScenarioPopulatesControlsAndSource()
     QCOMPARE(applied.randomSeed, scenario.randomSeed);
     QCOMPARE(applied.unthrottled, true);
     QCOMPARE(applied.tones.size(), std::size_t(2));
-    QCOMPARE(applied.tones[0].widthBins, 4.5F);
+    QCOMPARE(applied.tones[0].widthHz, 4.5e6);
     QCOMPARE(applied.sweepStartHz, scenario.sweepStartHz);
     QCOMPARE(applied.sweepStopHz, scenario.sweepStopHz);
 
@@ -389,7 +389,7 @@ void MainWindowTests::initialScenarioPopulatesControlsAndSource()
     auto* frameRate = window.findChild<QDoubleSpinBox*>(QStringLiteral("sourceFrameRate"));
     auto* sweepStart = window.findChild<QDoubleSpinBox*>(
         QStringLiteral("sweepStartFrequencyMHz"));
-    auto* toneWidth = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1WidthBins"));
+    auto* toneWidth = window.findChild<QDoubleSpinBox*>(QStringLiteral("tone1WidthMHz"));
     QVERIFY(unthrottled && sweepStart && toneWidth);
     QVERIFY(window.findChild<QPushButton*>(QStringLiteral("saveScenarioButton")));
     QVERIFY(unthrottled->isChecked());

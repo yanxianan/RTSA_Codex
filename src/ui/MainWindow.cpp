@@ -1267,11 +1267,11 @@ QWidget* MainWindow::buildSimulationGroup()
     tone1AmplitudeSpin_->setValue(-35.0);
     tone1AmplitudeSpin_->setSuffix(tr(" dBFS"));
     tone1WidthSpin_ = new QDoubleSpinBox(group);
-    tone1WidthSpin_->setObjectName(QStringLiteral("tone1WidthBins"));
-    tone1WidthSpin_->setRange(0.1, 1024.0);
-    tone1WidthSpin_->setDecimals(2);
+    tone1WidthSpin_->setObjectName(QStringLiteral("tone1WidthMHz"));
+    tone1WidthSpin_->setRange(0.0001, 10000.0);
+    tone1WidthSpin_->setDecimals(4);
     tone1WidthSpin_->setValue(1.5);
-    tone1WidthSpin_->setSuffix(tr(" bins"));
+    tone1WidthSpin_->setSuffix(tr(" MHz"));
 
     tone2EnabledCheck_ = new QCheckBox(tr("启用"), group);
     tone2EnabledCheck_->setObjectName(QStringLiteral("tone2Enabled"));
@@ -1288,11 +1288,11 @@ QWidget* MainWindow::buildSimulationGroup()
     tone2AmplitudeSpin_->setValue(-18.0);
     tone2AmplitudeSpin_->setSuffix(tr(" dBFS"));
     tone2WidthSpin_ = new QDoubleSpinBox(group);
-    tone2WidthSpin_->setObjectName(QStringLiteral("tone2WidthBins"));
-    tone2WidthSpin_->setRange(0.1, 1024.0);
-    tone2WidthSpin_->setDecimals(2);
+    tone2WidthSpin_->setObjectName(QStringLiteral("tone2WidthMHz"));
+    tone2WidthSpin_->setRange(0.0001, 10000.0);
+    tone2WidthSpin_->setDecimals(4);
     tone2WidthSpin_->setValue(2.5);
-    tone2WidthSpin_->setSuffix(tr(" bins"));
+    tone2WidthSpin_->setSuffix(tr(" MHz"));
 
     sweepEnabledCheck_ = new QCheckBox(tr("启用"), group);
     sweepEnabledCheck_->setObjectName(QStringLiteral("sweepEnabled"));
@@ -1737,11 +1737,11 @@ void MainWindow::loadSettings()
         tone1EnabledCheck_->setChecked(settings.tone1Enabled);
         tone1FrequencySpin_->setValue(settings.tone1FrequencyMHz);
         tone1AmplitudeSpin_->setValue(settings.tone1AmplitudeDbfs);
-        tone1WidthSpin_->setValue(settings.tone1WidthBins);
+        tone1WidthSpin_->setValue(settings.tone1WidthMHz);
         tone2EnabledCheck_->setChecked(settings.tone2Enabled);
         tone2FrequencySpin_->setValue(settings.tone2FrequencyMHz);
         tone2AmplitudeSpin_->setValue(settings.tone2AmplitudeDbfs);
-        tone2WidthSpin_->setValue(settings.tone2WidthBins);
+        tone2WidthSpin_->setValue(settings.tone2WidthMHz);
         sweepEnabledCheck_->setChecked(settings.sweepEnabled);
         sweepStartFrequencySpin_->setValue(settings.sweepStartFrequencyMHz);
         sweepStopFrequencySpin_->setValue(settings.sweepStopFrequencyMHz);
@@ -1806,11 +1806,11 @@ void MainWindow::saveSettings() const
         settings.tone1Enabled = tone1EnabledCheck_->isChecked();
         settings.tone1FrequencyMHz = tone1FrequencySpin_->value();
         settings.tone1AmplitudeDbfs = tone1AmplitudeSpin_->value();
-        settings.tone1WidthBins = tone1WidthSpin_->value();
+        settings.tone1WidthMHz = tone1WidthSpin_->value();
         settings.tone2Enabled = tone2EnabledCheck_->isChecked();
         settings.tone2FrequencyMHz = tone2FrequencySpin_->value();
         settings.tone2AmplitudeDbfs = tone2AmplitudeSpin_->value();
-        settings.tone2WidthBins = tone2WidthSpin_->value();
+        settings.tone2WidthMHz = tone2WidthSpin_->value();
         settings.sweepEnabled = sweepEnabledCheck_->isChecked();
         settings.sweepStartFrequencyMHz = sweepStartFrequencySpin_->value();
         settings.sweepStopFrequencyMHz = sweepStopFrequencySpin_->value();
@@ -1855,17 +1855,17 @@ void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
     noiseFloorSpin_->setValue(config.noiseFloorDbfs);
     noiseDeviationSpin_->setValue(config.noiseDeviationDb);
 
-    const ToneConfig emptyTone { false, config.centerFrequencyHz, -20.0F, 1.0F };
+    const ToneConfig emptyTone { false, config.centerFrequencyHz, -20.0F, 1.0e6 };
     const ToneConfig& tone1 = config.tones.empty() ? emptyTone : config.tones[0];
     const ToneConfig& tone2 = config.tones.size() < 2 ? emptyTone : config.tones[1];
     tone1EnabledCheck_->setChecked(tone1.enabled);
     tone1FrequencySpin_->setValue(tone1.frequencyHz / 1.0e6);
     tone1AmplitudeSpin_->setValue(tone1.amplitudeDbfs);
-    tone1WidthSpin_->setValue(tone1.widthBins);
+    tone1WidthSpin_->setValue(tone1.widthHz / 1.0e6);
     tone2EnabledCheck_->setChecked(tone2.enabled);
     tone2FrequencySpin_->setValue(tone2.frequencyHz / 1.0e6);
     tone2AmplitudeSpin_->setValue(tone2.amplitudeDbfs);
-    tone2WidthSpin_->setValue(tone2.widthBins);
+    tone2WidthSpin_->setValue(tone2.widthHz / 1.0e6);
 
     sweepEnabledCheck_->setChecked(config.sweepEnabled);
     sweepStartFrequencySpin_->setValue(config.sweepStartHz / 1.0e6);
@@ -1948,11 +1948,11 @@ SimulationConfig MainWindow::configurationFromUi() const
             ToneConfig { tone1EnabledCheck_->isChecked(),
                          tone1FrequencySpin_->value() * 1.0e6,
                          static_cast<float>(tone1AmplitudeSpin_->value()),
-                         static_cast<float>(tone1WidthSpin_->value()) },
+                         tone1WidthSpin_->value() * 1.0e6 },
             ToneConfig { tone2EnabledCheck_->isChecked(),
                          tone2FrequencySpin_->value() * 1.0e6,
                          static_cast<float>(tone2AmplitudeSpin_->value()),
-                         static_cast<float>(tone2WidthSpin_->value()) }
+                         tone2WidthSpin_->value() * 1.0e6 }
         };
         config.sweepEnabled = sweepEnabledCheck_->isChecked();
         config.sweepStartHz = sweepStartFrequencySpin_->value() * 1.0e6;

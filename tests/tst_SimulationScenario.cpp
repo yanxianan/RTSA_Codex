@@ -51,7 +51,7 @@ void SimulationScenarioTests::deliveredScenariosLoad()
     QVERIFY2(defaults.success, qPrintable(defaults.errorMessage));
     QCOMPARE(defaults.configuration.binCount, std::size_t(16384));
     QCOMPARE(defaults.configuration.tones.size(), std::size_t(2));
-    QCOMPARE(defaults.configuration.tones[0].widthBins, 1.5F);
+    QCOMPARE(defaults.configuration.tones[0].widthHz, 1.5e6);
     QVERIFY(!defaults.configuration.unthrottled);
 
     const SimulationScenarioLoadResult stress = SimulationScenarioLoader::loadFile(
@@ -196,7 +196,7 @@ void SimulationScenarioTests::scenarioSaveRoundTripsAtomically()
     QCOMPARE(loaded.configuration.randomSeed, config.randomSeed);
     QCOMPARE(loaded.configuration.unthrottled, config.unthrottled);
     QCOMPARE(loaded.configuration.tones.size(), config.tones.size());
-    QCOMPARE(loaded.configuration.tones[0].widthBins, config.tones[0].widthBins);
+    QCOMPARE(loaded.configuration.tones[0].widthHz, config.tones[0].widthHz);
     QCOMPARE(static_cast<int>(loaded.configuration.sweepDirection),
              static_cast<int>(config.sweepDirection));
     QCOMPARE(loaded.configuration.transientDurationSeconds,

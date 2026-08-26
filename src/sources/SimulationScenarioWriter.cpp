@@ -31,7 +31,7 @@ QJsonObject encodeScenario(const QString& scenarioName, const SimulationConfig& 
             { QStringLiteral("enabled"), tone.enabled },
             { QStringLiteral("frequencyHz"), tone.frequencyHz },
             { QStringLiteral("amplitudeDbfs"), tone.amplitudeDbfs },
-            { QStringLiteral("widthBins"), tone.widthBins }
+            { QStringLiteral("widthHz"), tone.widthHz }
         });
     }
 

@@ -582,18 +582,18 @@ void SimulatedSourceTests::injectedBurstProducesBackToBackFrames()
 
 void SimulatedSourceTests::toneWidthChangesOccupiedBins()
 {
-    auto occupiedBins = [](const float widthBins) {
+    auto occupiedBins = [](const double spanHz, const double widthHz) {
         SpectrumPipeline pipeline;
         SimulatedSpectrumSource source;
         SimulationConfig config;
         config.binCount = 4096;
         config.centerFrequencyHz = 100.0e6;
-        config.spanHz = 20.0e6;
+        config.spanHz = spanHz;
         config.noiseFloorDbfs = -150.0F;
         config.noiseDeviationDb = 0.0F;
         config.sweepEnabled = false;
         config.transientProbability = 0.0F;
-        config.tones = { ToneConfig { true, 100.0e6, -10.0F, widthBins } };
+        config.tones = { ToneConfig { true, 100.0e6, -10.0F, widthHz } };
         source.configure(config);
         source.setFrameSink([&pipeline](const SpectrumFramePtr& frame) {
             return pipeline.submit(frame);
@@ -613,10 +613,17 @@ void SimulatedSourceTests::toneWidthChangesOccupiedBins()
                      : std::size_t { 0 };
     };
 
-    const std::size_t narrow = occupiedBins(0.5F);
-    const std::size_t wide = occupiedBins(8.0F);
+    const std::size_t narrow = occupiedBins(20.0e6, 20.0e3);
+    const std::size_t wide = occupiedBins(20.0e6, 200.0e3);
     QVERIFY(narrow > 0U);
     QVERIFY(wide > narrow * 2U);
+
+    // When the signal physical bandwidth is unchanged (100 kHz), narrowing the Span from 20MHz to 2MHz
+    // causes the tone to occupy ~10x more frequency bins in the display.
+    const std::size_t wideSpanOccupied = occupiedBins(20.0e6, 100.0e3);
+    const std::size_t narrowSpanOccupied = occupiedBins(2.0e6, 100.0e3);
+    QVERIFY(wideSpanOccupied > 0U);
+    QVERIFY(narrowSpanOccupied > wideSpanOccupied * 3U);
 }
 
 void SimulatedSourceTests::equalTonesCombineInLinearPower()

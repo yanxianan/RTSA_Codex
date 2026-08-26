@@ -106,14 +106,14 @@ bool AppSettings::isValid() const noexcept
         && tone1FrequencyMHz >= 0.0 && tone1FrequencyMHz <= 25000.0
         && std::isfinite(tone1AmplitudeDbfs)
         && tone1AmplitudeDbfs >= -180.0 && tone1AmplitudeDbfs <= 0.0
-        && std::isfinite(tone1WidthBins)
-        && tone1WidthBins >= 0.1 && tone1WidthBins <= 1024.0
+        && std::isfinite(tone1WidthMHz)
+        && tone1WidthMHz >= 0.0001 && tone1WidthMHz <= 10000.0
         && std::isfinite(tone2FrequencyMHz)
         && tone2FrequencyMHz >= 0.0 && tone2FrequencyMHz <= 25000.0
         && std::isfinite(tone2AmplitudeDbfs)
         && tone2AmplitudeDbfs >= -180.0 && tone2AmplitudeDbfs <= 0.0
-        && std::isfinite(tone2WidthBins)
-        && tone2WidthBins >= 0.1 && tone2WidthBins <= 1024.0
+        && std::isfinite(tone2WidthMHz)
+        && tone2WidthMHz >= 0.0001 && tone2WidthMHz <= 10000.0
         && std::isfinite(sweepStartFrequencyMHz)
         && sweepStartFrequencyMHz >= 0.0 && sweepStartFrequencyMHz <= 25000.0
         && std::isfinite(sweepStopFrequencyMHz)
@@ -197,16 +197,22 @@ SettingsLoadResult ConfigurationStore::load(QSettings& storage)
                       defaults.tone1FrequencyMHz, candidate.tone1FrequencyMHz)
         && readDouble(storage, QStringLiteral("tone1AmplitudeDbfs"),
                       defaults.tone1AmplitudeDbfs, candidate.tone1AmplitudeDbfs)
-        && readDouble(storage, QStringLiteral("tone1WidthBins"),
-                      defaults.tone1WidthBins, candidate.tone1WidthBins)
+        && (storage.contains(QStringLiteral("tone1WidthMHz"))
+                ? readDouble(storage, QStringLiteral("tone1WidthMHz"),
+                             defaults.tone1WidthMHz, candidate.tone1WidthMHz)
+                : readDouble(storage, QStringLiteral("tone1WidthBins"),
+                             defaults.tone1WidthMHz, candidate.tone1WidthMHz))
         && readBool(storage, QStringLiteral("tone2Enabled"),
                     defaults.tone2Enabled, candidate.tone2Enabled)
         && readDouble(storage, QStringLiteral("tone2FrequencyMHz"),
                       defaults.tone2FrequencyMHz, candidate.tone2FrequencyMHz)
         && readDouble(storage, QStringLiteral("tone2AmplitudeDbfs"),
                       defaults.tone2AmplitudeDbfs, candidate.tone2AmplitudeDbfs)
-        && readDouble(storage, QStringLiteral("tone2WidthBins"),
-                      defaults.tone2WidthBins, candidate.tone2WidthBins)
+        && (storage.contains(QStringLiteral("tone2WidthMHz"))
+                ? readDouble(storage, QStringLiteral("tone2WidthMHz"),
+                             defaults.tone2WidthMHz, candidate.tone2WidthMHz)
+                : readDouble(storage, QStringLiteral("tone2WidthBins"),
+                             defaults.tone2WidthMHz, candidate.tone2WidthMHz))
         && readBool(storage, QStringLiteral("sweepEnabled"),
                     defaults.sweepEnabled, candidate.sweepEnabled)
         && readDouble(storage, QStringLiteral("sweepStartFrequencyMHz"),
@@ -290,11 +296,11 @@ SettingsSaveResult ConfigurationStore::save(QSettings& storage,
     storage.setValue(QStringLiteral("tone1Enabled"), settings.tone1Enabled);
     storage.setValue(QStringLiteral("tone1FrequencyMHz"), settings.tone1FrequencyMHz);
     storage.setValue(QStringLiteral("tone1AmplitudeDbfs"), settings.tone1AmplitudeDbfs);
-    storage.setValue(QStringLiteral("tone1WidthBins"), settings.tone1WidthBins);
+    storage.setValue(QStringLiteral("tone1WidthMHz"), settings.tone1WidthMHz);
     storage.setValue(QStringLiteral("tone2Enabled"), settings.tone2Enabled);
     storage.setValue(QStringLiteral("tone2FrequencyMHz"), settings.tone2FrequencyMHz);
     storage.setValue(QStringLiteral("tone2AmplitudeDbfs"), settings.tone2AmplitudeDbfs);
-    storage.setValue(QStringLiteral("tone2WidthBins"), settings.tone2WidthBins);
+    storage.setValue(QStringLiteral("tone2WidthMHz"), settings.tone2WidthMHz);
     storage.setValue(QStringLiteral("sweepEnabled"), settings.sweepEnabled);
     storage.setValue(QStringLiteral("sweepStartFrequencyMHz"), settings.sweepStartFrequencyMHz);
     storage.setValue(QStringLiteral("sweepStopFrequencyMHz"), settings.sweepStopFrequencyMHz);
