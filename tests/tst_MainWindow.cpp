@@ -1,6 +1,7 @@
 #include "plot/SpectrumPlotWidget.h"
 #include "sources/SimulatedSpectrumSource.h"
 #include "ui/ApplicationTheme.h"
+#include "ui/FrequencySpinBox.h"
 #include "ui/MainWindow.h"
 
 #include <QDoubleSpinBox>
@@ -67,6 +68,8 @@ private slots:
     void rangeMeasurementsUseLatestFullFrame();
     void telemetryShowsProcessingRenderAndQueueDepth();
     void unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges();
+    void frequencySpinBoxSeparatesValueAndUnitWithAutoScaling();
+    void frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz();
 };
 
 namespace {
@@ -519,6 +522,102 @@ void MainWindowTests::unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges(
     // 2. Unfocused combobox in main window ignores wheel
     QApplication::sendEvent(fftCombo, &wheelEvent);
     QCOMPARE(fftCombo->currentIndex(), initialFftIndex);
+}
+
+void MainWindowTests::frequencySpinBoxSeparatesValueAndUnitWithAutoScaling()
+{
+    FrequencySpinBox spin;
+    spin.setFrequencyRangeHz(0.0, 20.0e9);
+
+    // Initial default in MHz
+    spin.setFrequencyHz(1000.0e6);
+    QCOMPARE(spin.value(), 1000.0);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::MHz);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("MHz"));
+
+    // Changing dropdown to GHz preserves physical frequency and changes value to 1.0
+    spin.setUnit(FrequencySpinBox::Unit::GHz);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::GHz);
+    QCOMPARE(spin.value(), 1.0);
+    QCOMPARE(spin.frequencyHz(), 1000.0e6);
+
+    // Compound widget layout test
+    QWidget* compound = spin.createCompoundWidget();
+    QVERIFY(compound);
+    QVERIFY(spin.parentWidget() == compound);
+    QVERIFY(spin.unitComboBox()->parentWidget() == compound);
+}
+
+void MainWindowTests::frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz()
+{
+    FrequencySpinBox spin;
+    spin.setFrequencyRangeHz(0.0, 20.0e9);
+
+    // Set to 5 kHz
+    spin.setFrequencyHz(5.0e3);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.value(), 5.0);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("kHz"));
+
+    // Step down 1: 5 kHz -> 4 kHz
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.value(), 4.0);
+
+    // Step down 2: 4 kHz -> 3 kHz
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.value(), 3.0);
+
+    // Step down 3: 3 kHz -> 2 kHz
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.value(), 2.0);
+
+    // Step down 4: 2 kHz -> 1 kHz
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.value(), 1.0);
+
+    // Step down 5: When decreasing below 1 kHz, unit automatically switches to Hz and value starts from 1000 downwards (999 Hz)
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::Hz);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("Hz"));
+    QCOMPARE(spin.value(), 999.0);
+    QCOMPARE(spin.frequencyHz(), 999.0);
+
+    // Continue decreasing in Hz
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::Hz);
+    QCOMPARE(spin.value(), 998.0);
+    QCOMPARE(spin.frequencyHz(), 998.0);
+
+    // Step up back to 1000 Hz: auto-switches back to kHz (1.000 kHz)
+    spin.stepBy(1); // 999 Hz
+    QCOMPARE(spin.value(), 999.0);
+    spin.stepBy(1); // 1000 Hz -> switches to kHz
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("kHz"));
+    QCOMPARE(spin.value(), 1.0);
+
+    // Also test MHz to kHz boundary: at 1.0 MHz, step down becomes 999.0 kHz
+    spin.setFrequencyHz(1.0e6);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::MHz);
+    QCOMPARE(spin.value(), 1.0);
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::kHz);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("kHz"));
+    QCOMPARE(spin.value(), 999.0);
+
+    // Also test GHz to MHz boundary: at 1.0 GHz, step down becomes 999.0 MHz
+    spin.setUnit(FrequencySpinBox::Unit::GHz);
+    spin.setValue(1.0);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::GHz);
+    QCOMPARE(spin.value(), 1.0);
+    spin.stepBy(-1);
+    QCOMPARE(spin.unit(), FrequencySpinBox::Unit::MHz);
+    QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("MHz"));
+    QCOMPARE(spin.value(), 999.0);
 }
 
 } // namespace rtsa

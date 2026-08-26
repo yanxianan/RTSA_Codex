@@ -7,6 +7,7 @@
 #include "services/ConfigurationStore.h"
 #include "services/SpectrumExporter.h"
 #include "sources/SimulationScenarioWriter.h"
+#include "ui/FrequencySpinBox.h"
 #include "ui/UnfocusedWheelFilter.h"
 
 #include <QAction>
@@ -110,8 +111,8 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
         simulationControl_->configure(*initialSimulation);
         loadSimulationConfiguration(*initialSimulation);
     }
-    fullRangeCenterHz_ = centerFrequencySpin_->value() * 1.0e6;
-    fullRangeSpanHz_ = spanSpin_->value() * 1.0e6;
+    fullRangeCenterHz_ = centerFrequencySpin_->frequencyHz();
+    fullRangeSpanHz_ = spanSpin_->frequencyHz();
     connectUi();
 
     source_->setFrameSink([this](const SpectrumFramePtr& frame) {
@@ -310,38 +311,38 @@ void MainWindow::refreshStatistics()
 void MainWindow::applySourceConfiguration()
 {
     synchronizeStartStopFromCenterSpan();
-    fullRangeCenterHz_ = centerFrequencySpin_->value() * 1.0e6;
-    fullRangeSpanHz_ = spanSpin_->value() * 1.0e6;
+    fullRangeCenterHz_ = centerFrequencySpin_->frequencyHz();
+    fullRangeSpanHz_ = spanSpin_->frequencyHz();
     configureSourceFromUi();
 }
 
 void MainWindow::applyNonFrequencySourceConfiguration()
 {
     if (simulationControl_
-        && sweepStartFrequencySpin_->value() >= sweepStopFrequencySpin_->value()) {
+        && sweepStartFrequencySpin_->frequencyHz() >= sweepStopFrequencySpin_->frequencyHz()) {
         const QSignalBlocker blocker(sweepStopFrequencySpin_);
-        sweepStopFrequencySpin_->setValue(sweepStartFrequencySpin_->value() + 0.001);
+        sweepStopFrequencySpin_->setFrequencyHz(sweepStartFrequencySpin_->frequencyHz() + 1.0e3);
     }
     configureSourceFromUi();
 }
 
 void MainWindow::applyStartStopConfiguration()
 {
-    double startMHz = startFrequencySpin_->value();
-    double stopMHz = stopFrequencySpin_->value();
-    if (stopMHz <= startMHz) {
-        stopMHz = startMHz + 0.001;
+    double startHz = startFrequencySpin_->frequencyHz();
+    double stopHz = stopFrequencySpin_->frequencyHz();
+    if (stopHz <= startHz) {
+        stopHz = startHz + 1.0e3;
     }
-    const double spanMHz = std::clamp(stopMHz - startMHz,
-                                      spanSpin_->minimum(), spanSpin_->maximum());
-    const double centerMHz = std::clamp((startMHz + stopMHz) * 0.5,
-                                        centerFrequencySpin_->minimum(),
-                                        centerFrequencySpin_->maximum());
+    const double spanHz = std::clamp(stopHz - startHz,
+                                      spanSpin_->minimumFrequencyHz(), spanSpin_->maximumFrequencyHz());
+    const double centerHz = std::clamp((startHz + stopHz) * 0.5,
+                                        centerFrequencySpin_->minimumFrequencyHz(),
+                                        centerFrequencySpin_->maximumFrequencyHz());
     {
         const QSignalBlocker centerBlocker(centerFrequencySpin_);
         const QSignalBlocker spanBlocker(spanSpin_);
-        centerFrequencySpin_->setValue(centerMHz);
-        spanSpin_->setValue(spanMHz);
+        centerFrequencySpin_->setFrequencyHz(centerHz);
+        spanSpin_->setFrequencyHz(spanHz);
     }
     applySourceConfiguration();
 }
@@ -471,8 +472,8 @@ void MainWindow::measureRangePeak()
     }
     const RangePeakMeasurement result = SpectrumMeasurements::peakInRange(
         *frame,
-        measurementStartSpin_->value() * 1.0e6,
-        measurementStopSpin_->value() * 1.0e6);
+        measurementStartSpin_->frequencyHz(),
+        measurementStopSpin_->frequencyHz());
     if (!result.valid) {
         measurementResultLabel_->setText(tr("区间无效或不含有效频点"));
         return;
@@ -493,8 +494,8 @@ void MainWindow::measureChannelPower()
     }
     const ChannelPowerMeasurement result = SpectrumMeasurements::channelPowerInRange(
         *frame,
-        measurementStartSpin_->value() * 1.0e6,
-        measurementStopSpin_->value() * 1.0e6);
+        measurementStartSpin_->frequencyHz(),
+        measurementStopSpin_->frequencyHz());
     if (!result.valid) {
         measurementResultLabel_->setText(tr("区间无效或功率数据不可积分"));
         return;
@@ -508,17 +509,17 @@ void MainWindow::measureChannelPower()
 
 void MainWindow::synchronizeStartStopFromCenterSpan()
 {
-    const double centerMHz = centerFrequencySpin_->value();
-    const double halfSpanMHz = spanSpin_->value() * 0.5;
+    const double centerHz = centerFrequencySpin_->frequencyHz();
+    const double halfSpanHz = spanSpin_->frequencyHz() * 0.5;
     const QSignalBlocker startBlocker(startFrequencySpin_);
     const QSignalBlocker stopBlocker(stopFrequencySpin_);
-    startFrequencySpin_->setValue(centerMHz - halfSpanMHz);
-    stopFrequencySpin_->setValue(centerMHz + halfSpanMHz);
+    startFrequencySpin_->setFrequencyHz(centerHz - halfSpanHz, false);
+    stopFrequencySpin_->setFrequencyHz(centerHz + halfSpanHz, false);
     if (measurementStartSpin_ && measurementStopSpin_) {
         const QSignalBlocker measurementStartBlocker(measurementStartSpin_);
         const QSignalBlocker measurementStopBlocker(measurementStopSpin_);
-        measurementStartSpin_->setValue(centerMHz - halfSpanMHz);
-        measurementStopSpin_->setValue(centerMHz + halfSpanMHz);
+        measurementStartSpin_->setFrequencyHz(centerHz - halfSpanHz, false);
+        measurementStopSpin_->setFrequencyHz(centerHz + halfSpanHz, false);
     }
 }
 
@@ -578,16 +579,16 @@ void MainWindow::refreshMarkerLabels()
 void MainWindow::handleSpanScaleRequested(const double scaleFactor,
                                           const double anchorFrequencyHz)
 {
-    const double oldCenterHz = centerFrequencySpin_->value() * 1.0e6;
-    const double oldSpanHz = spanSpin_->value() * 1.0e6;
+    const double oldCenterHz = centerFrequencySpin_->frequencyHz();
+    const double oldSpanHz = spanSpin_->frequencyHz();
     const double newSpanHz = std::clamp(oldSpanHz * scaleFactor, 1.0e3, 10.0e9);
     const double newCenterHz = anchorFrequencyHz + (oldCenterHz - anchorFrequencyHz) * scaleFactor;
 
     {
         const QSignalBlocker centerBlocker(centerFrequencySpin_);
         const QSignalBlocker spanBlocker(spanSpin_);
-        centerFrequencySpin_->setValue(newCenterHz / 1.0e6);
-        spanSpin_->setValue(newSpanHz / 1.0e6);
+        centerFrequencySpin_->setFrequencyHz(newCenterHz);
+        spanSpin_->setFrequencyHz(newSpanHz);
     }
     synchronizeStartStopFromCenterSpan();
     configureSourceFromUi();
@@ -596,8 +597,8 @@ void MainWindow::handleSpanScaleRequested(const double scaleFactor,
 void MainWindow::handleFrequencyPanRequested(const double centerShiftHz)
 {
     const QSignalBlocker blocker(centerFrequencySpin_);
-    centerFrequencySpin_->setValue(
-        centerFrequencySpin_->value() + centerShiftHz / 1.0e6);
+    centerFrequencySpin_->setFrequencyHz(
+        centerFrequencySpin_->frequencyHz() + centerShiftHz);
     synchronizeStartStopFromCenterSpan();
     configureSourceFromUi();
 }
@@ -609,17 +610,17 @@ void MainWindow::handleFrequencyRangeSelected(const double startFrequencyHz,
         || stopFrequencyHz <= startFrequencyHz) {
         return;
     }
-    const double spanMHz = std::clamp(
-        (stopFrequencyHz - startFrequencyHz) / 1.0e6,
-        spanSpin_->minimum(), spanSpin_->maximum());
-    const double centerMHz = std::clamp(
-        (startFrequencyHz + stopFrequencyHz) * 0.5 / 1.0e6,
-        centerFrequencySpin_->minimum(), centerFrequencySpin_->maximum());
+    const double spanHz = std::clamp(
+        stopFrequencyHz - startFrequencyHz,
+        spanSpin_->minimumFrequencyHz(), spanSpin_->maximumFrequencyHz());
+    const double centerHz = std::clamp(
+        (startFrequencyHz + stopFrequencyHz) * 0.5,
+        centerFrequencySpin_->minimumFrequencyHz(), centerFrequencySpin_->maximumFrequencyHz());
     {
         const QSignalBlocker centerBlocker(centerFrequencySpin_);
         const QSignalBlocker spanBlocker(spanSpin_);
-        centerFrequencySpin_->setValue(centerMHz);
-        spanSpin_->setValue(spanMHz);
+        centerFrequencySpin_->setFrequencyHz(centerHz);
+        spanSpin_->setFrequencyHz(spanHz);
     }
     synchronizeStartStopFromCenterSpan();
     configureSourceFromUi();
@@ -651,8 +652,8 @@ void MainWindow::resetFrequencyRange()
     {
         const QSignalBlocker centerBlocker(centerFrequencySpin_);
         const QSignalBlocker spanBlocker(spanSpin_);
-        centerFrequencySpin_->setValue(fullRangeCenterHz_ / 1.0e6);
-        spanSpin_->setValue(fullRangeSpanHz_ / 1.0e6);
+        centerFrequencySpin_->setFrequencyHz(fullRangeCenterHz_);
+        spanSpin_->setFrequencyHz(fullRangeSpanHz_);
     }
     synchronizeStartStopFromCenterSpan();
     configureSourceFromUi();
@@ -1086,33 +1087,25 @@ QWidget* MainWindow::buildSourceGroup()
     auto* group = new QGroupBox(tr("数据源与频率"), this);
     auto* form = new QFormLayout(group);
 
-    centerFrequencySpin_ = new QDoubleSpinBox(group);
+    centerFrequencySpin_ = new FrequencySpinBox(group);
     centerFrequencySpin_->setObjectName(QStringLiteral("centerFrequencyMHz"));
-    centerFrequencySpin_->setRange(0.0, 20000.0);
-    centerFrequencySpin_->setDecimals(6);
-    centerFrequencySpin_->setValue(1000.0);
-    centerFrequencySpin_->setSuffix(tr(" MHz"));
+    centerFrequencySpin_->setFrequencyRangeHz(0.0, 20.0e9);
+    centerFrequencySpin_->setFrequencyHz(1000.0e6);
 
-    spanSpin_ = new QDoubleSpinBox(group);
+    spanSpin_ = new FrequencySpinBox(group);
     spanSpin_->setObjectName(QStringLiteral("spanMHz"));
-    spanSpin_->setRange(0.001, 10000.0);
-    spanSpin_->setDecimals(3);
-    spanSpin_->setValue(200.0);
-    spanSpin_->setSuffix(tr(" MHz"));
+    spanSpin_->setFrequencyRangeHz(1.0e3, 10.0e9);
+    spanSpin_->setFrequencyHz(200.0e6);
 
-    startFrequencySpin_ = new QDoubleSpinBox(group);
+    startFrequencySpin_ = new FrequencySpinBox(group);
     startFrequencySpin_->setObjectName(QStringLiteral("startFrequencyMHz"));
-    startFrequencySpin_->setRange(-5000.0, 25000.0);
-    startFrequencySpin_->setDecimals(6);
-    startFrequencySpin_->setValue(900.0);
-    startFrequencySpin_->setSuffix(tr(" MHz"));
+    startFrequencySpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
+    startFrequencySpin_->setFrequencyHz(900.0e6);
 
-    stopFrequencySpin_ = new QDoubleSpinBox(group);
+    stopFrequencySpin_ = new FrequencySpinBox(group);
     stopFrequencySpin_->setObjectName(QStringLiteral("stopFrequencyMHz"));
-    stopFrequencySpin_->setRange(-4999.999, 25000.0);
-    stopFrequencySpin_->setDecimals(6);
-    stopFrequencySpin_->setValue(1100.0);
-    stopFrequencySpin_->setSuffix(tr(" MHz"));
+    stopFrequencySpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
+    stopFrequencySpin_->setFrequencyHz(1100.0e6);
 
     fftSizeCombo_ = new QComboBox(group);
     fftSizeCombo_->setObjectName(QStringLiteral("fftSize"));
@@ -1134,10 +1127,10 @@ QWidget* MainWindow::buildSourceGroup()
     noiseFloorSpin_->setValue(-110.0);
     noiseFloorSpin_->setSuffix(tr(" dBFS"));
 
-    form->addRow(tr("中心频率"), centerFrequencySpin_);
-    form->addRow(tr("频宽（Span）"), spanSpin_);
-    form->addRow(tr("起始频率"), startFrequencySpin_);
-    form->addRow(tr("终止频率"), stopFrequencySpin_);
+    form->addRow(tr("中心频率"), centerFrequencySpin_->createCompoundWidget(group));
+    form->addRow(tr("频宽（Span）"), spanSpin_->createCompoundWidget(group));
+    form->addRow(tr("起始频率"), startFrequencySpin_->createCompoundWidget(group));
+    form->addRow(tr("终止频率"), stopFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("频点数"), fftSizeCombo_);
     form->addRow(tr("输入帧率"), sourceFrameRateSpin_);
     form->addRow(tr("噪声底"), noiseFloorSpin_);
@@ -1255,44 +1248,36 @@ QWidget* MainWindow::buildSimulationGroup()
     tone1EnabledCheck_ = new QCheckBox(tr("启用"), group);
     tone1EnabledCheck_->setObjectName(QStringLiteral("tone1Enabled"));
     tone1EnabledCheck_->setChecked(true);
-    tone1FrequencySpin_ = new QDoubleSpinBox(group);
+    tone1FrequencySpin_ = new FrequencySpinBox(group);
     tone1FrequencySpin_->setObjectName(QStringLiteral("tone1FrequencyMHz"));
-    tone1FrequencySpin_->setRange(0.0, 25000.0);
-    tone1FrequencySpin_->setDecimals(6);
-    tone1FrequencySpin_->setValue(980.0);
-    tone1FrequencySpin_->setSuffix(tr(" MHz"));
+    tone1FrequencySpin_->setFrequencyRangeHz(0.0, 25.0e9);
+    tone1FrequencySpin_->setFrequencyHz(980.0e6);
     tone1AmplitudeSpin_ = new QDoubleSpinBox(group);
     tone1AmplitudeSpin_->setObjectName(QStringLiteral("tone1AmplitudeDbfs"));
     tone1AmplitudeSpin_->setRange(-180.0, 0.0);
     tone1AmplitudeSpin_->setValue(-35.0);
     tone1AmplitudeSpin_->setSuffix(tr(" dBFS"));
-    tone1WidthSpin_ = new QDoubleSpinBox(group);
+    tone1WidthSpin_ = new FrequencySpinBox(group);
     tone1WidthSpin_->setObjectName(QStringLiteral("tone1WidthMHz"));
-    tone1WidthSpin_->setRange(0.0001, 10000.0);
-    tone1WidthSpin_->setDecimals(4);
-    tone1WidthSpin_->setValue(1.5);
-    tone1WidthSpin_->setSuffix(tr(" MHz"));
+    tone1WidthSpin_->setFrequencyRangeHz(1.0, 10.0e9);
+    tone1WidthSpin_->setFrequencyHz(1.5e6);
 
     tone2EnabledCheck_ = new QCheckBox(tr("启用"), group);
     tone2EnabledCheck_->setObjectName(QStringLiteral("tone2Enabled"));
     tone2EnabledCheck_->setChecked(true);
-    tone2FrequencySpin_ = new QDoubleSpinBox(group);
+    tone2FrequencySpin_ = new FrequencySpinBox(group);
     tone2FrequencySpin_->setObjectName(QStringLiteral("tone2FrequencyMHz"));
-    tone2FrequencySpin_->setRange(0.0, 25000.0);
-    tone2FrequencySpin_->setDecimals(6);
-    tone2FrequencySpin_->setValue(1035.0);
-    tone2FrequencySpin_->setSuffix(tr(" MHz"));
+    tone2FrequencySpin_->setFrequencyRangeHz(0.0, 25.0e9);
+    tone2FrequencySpin_->setFrequencyHz(1035.0e6);
     tone2AmplitudeSpin_ = new QDoubleSpinBox(group);
     tone2AmplitudeSpin_->setObjectName(QStringLiteral("tone2AmplitudeDbfs"));
     tone2AmplitudeSpin_->setRange(-180.0, 0.0);
     tone2AmplitudeSpin_->setValue(-18.0);
     tone2AmplitudeSpin_->setSuffix(tr(" dBFS"));
-    tone2WidthSpin_ = new QDoubleSpinBox(group);
+    tone2WidthSpin_ = new FrequencySpinBox(group);
     tone2WidthSpin_->setObjectName(QStringLiteral("tone2WidthMHz"));
-    tone2WidthSpin_->setRange(0.0001, 10000.0);
-    tone2WidthSpin_->setDecimals(4);
-    tone2WidthSpin_->setValue(2.5);
-    tone2WidthSpin_->setSuffix(tr(" MHz"));
+    tone2WidthSpin_->setFrequencyRangeHz(1.0, 10.0e9);
+    tone2WidthSpin_->setFrequencyHz(2.5e6);
 
     sweepEnabledCheck_ = new QCheckBox(tr("启用"), group);
     sweepEnabledCheck_->setObjectName(QStringLiteral("sweepEnabled"));
@@ -1302,18 +1287,14 @@ QWidget* MainWindow::buildSimulationGroup()
     sweepDirectionCombo_->addItem(tr("向上"), static_cast<int>(SweepDirection::Up));
     sweepDirectionCombo_->addItem(tr("向下"), static_cast<int>(SweepDirection::Down));
     sweepDirectionCombo_->addItem(tr("往返"), static_cast<int>(SweepDirection::PingPong));
-    sweepStartFrequencySpin_ = new QDoubleSpinBox(group);
+    sweepStartFrequencySpin_ = new FrequencySpinBox(group);
     sweepStartFrequencySpin_->setObjectName(QStringLiteral("sweepStartFrequencyMHz"));
-    sweepStartFrequencySpin_->setRange(0.0, 24999.999);
-    sweepStartFrequencySpin_->setDecimals(6);
-    sweepStartFrequencySpin_->setValue(930.0);
-    sweepStartFrequencySpin_->setSuffix(tr(" MHz"));
-    sweepStopFrequencySpin_ = new QDoubleSpinBox(group);
+    sweepStartFrequencySpin_->setFrequencyRangeHz(0.0, 24.999e9);
+    sweepStartFrequencySpin_->setFrequencyHz(930.0e6);
+    sweepStopFrequencySpin_ = new FrequencySpinBox(group);
     sweepStopFrequencySpin_->setObjectName(QStringLiteral("sweepStopFrequencyMHz"));
-    sweepStopFrequencySpin_->setRange(0.001, 25000.0);
-    sweepStopFrequencySpin_->setDecimals(6);
-    sweepStopFrequencySpin_->setValue(1070.0);
-    sweepStopFrequencySpin_->setSuffix(tr(" MHz"));
+    sweepStopFrequencySpin_->setFrequencyRangeHz(1.0e3, 25.0e9);
+    sweepStopFrequencySpin_->setFrequencyHz(1070.0e6);
     sweepPeriodSpin_ = new QDoubleSpinBox(group);
     sweepPeriodSpin_->setObjectName(QStringLiteral("sweepPeriodSeconds"));
     sweepPeriodSpin_->setRange(0.1, 3600.0);
@@ -1350,17 +1331,17 @@ QWidget* MainWindow::buildSimulationGroup()
     form->addRow(tr("无等待压测"), unthrottledCheck_);
     form->addRow(tr("噪声起伏"), noiseDeviationSpin_);
     form->addRow(tr("单音 1"), tone1EnabledCheck_);
-    form->addRow(tr("单音 1 频率"), tone1FrequencySpin_);
+    form->addRow(tr("单音 1 频率"), tone1FrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("单音 1 幅度"), tone1AmplitudeSpin_);
-    form->addRow(tr("单音 1 带宽"), tone1WidthSpin_);
+    form->addRow(tr("单音 1 带宽"), tone1WidthSpin_->createCompoundWidget(group));
     form->addRow(tr("单音 2"), tone2EnabledCheck_);
-    form->addRow(tr("单音 2 频率"), tone2FrequencySpin_);
+    form->addRow(tr("单音 2 频率"), tone2FrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("单音 2 幅度"), tone2AmplitudeSpin_);
-    form->addRow(tr("单音 2 带宽"), tone2WidthSpin_);
+    form->addRow(tr("单音 2 带宽"), tone2WidthSpin_->createCompoundWidget(group));
     form->addRow(tr("扫频"), sweepEnabledCheck_);
     form->addRow(tr("扫频方向"), sweepDirectionCombo_);
-    form->addRow(tr("扫频起点"), sweepStartFrequencySpin_);
-    form->addRow(tr("扫频终点"), sweepStopFrequencySpin_);
+    form->addRow(tr("扫频起点"), sweepStartFrequencySpin_->createCompoundWidget(group));
+    form->addRow(tr("扫频终点"), sweepStopFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("扫频周期"), sweepPeriodSpin_);
     form->addRow(tr("扫频幅度"), sweepAmplitudeSpin_);
     form->addRow(tr("瞬态概率"), transientProbabilitySpin_);
@@ -1448,18 +1429,16 @@ QWidget* MainWindow::buildMeasurementGroup()
 {
     auto* group = new QGroupBox(tr("区间测量"), this);
     auto* form = new QFormLayout(group);
-    measurementStartSpin_ = new QDoubleSpinBox(group);
+    measurementStartSpin_ = new FrequencySpinBox(group);
     measurementStartSpin_->setObjectName(QStringLiteral("measurementStartMHz"));
-    measurementStartSpin_->setRange(-5000.0, 25000.0);
-    measurementStartSpin_->setDecimals(6);
-    measurementStartSpin_->setValue(900.0);
-    measurementStartSpin_->setSuffix(tr(" MHz"));
-    measurementStopSpin_ = new QDoubleSpinBox(group);
+    measurementStartSpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
+    measurementStartSpin_->setFrequencyHz(900.0e6);
+
+    measurementStopSpin_ = new FrequencySpinBox(group);
     measurementStopSpin_->setObjectName(QStringLiteral("measurementStopMHz"));
-    measurementStopSpin_->setRange(-4999.999, 25000.0);
-    measurementStopSpin_->setDecimals(6);
-    measurementStopSpin_->setValue(1100.0);
-    measurementStopSpin_->setSuffix(tr(" MHz"));
+    measurementStopSpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
+    measurementStopSpin_->setFrequencyHz(1100.0e6);
+
     rangePeakButton_ = new QPushButton(tr("区间峰值"), group);
     rangePeakButton_->setObjectName(QStringLiteral("rangePeakButton"));
     channelPowerButton_ = new QPushButton(tr("信道功率"), group);
@@ -1472,8 +1451,8 @@ QWidget* MainWindow::buildMeasurementGroup()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(rangePeakButton_);
     layout->addWidget(channelPowerButton_);
-    form->addRow(tr("起始频率"), measurementStartSpin_);
-    form->addRow(tr("终止频率"), measurementStopSpin_);
+    form->addRow(tr("起始频率"), measurementStartSpin_->createCompoundWidget(group));
+    form->addRow(tr("终止频率"), measurementStopSpin_->createCompoundWidget(group));
     form->addRow(buttons);
     form->addRow(tr("结果"), measurementResultLabel_);
     return group;
@@ -1617,13 +1596,14 @@ void MainWindow::connectUi()
     connect(noiseFloorSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     if (simulationControl_) {
-        for (QDoubleSpinBox* spin : { noiseDeviationSpin_, tone1FrequencySpin_,
-                                     tone1AmplitudeSpin_, tone1WidthSpin_,
-                                     tone2FrequencySpin_, tone2AmplitudeSpin_,
-                                     tone2WidthSpin_, sweepStartFrequencySpin_,
-                                     sweepStopFrequencySpin_, sweepPeriodSpin_,
-                                     sweepAmplitudeSpin_, transientProbabilitySpin_,
-                                     transientAmplitudeSpin_, transientDurationSpin_ }) {
+        for (QDoubleSpinBox* spin : std::initializer_list<QDoubleSpinBox*>{
+                 noiseDeviationSpin_, tone1FrequencySpin_,
+                 tone1AmplitudeSpin_, tone1WidthSpin_,
+                 tone2FrequencySpin_, tone2AmplitudeSpin_,
+                 tone2WidthSpin_, sweepStartFrequencySpin_,
+                 sweepStopFrequencySpin_, sweepPeriodSpin_,
+                 sweepAmplitudeSpin_, transientProbabilitySpin_,
+                 transientAmplitudeSpin_, transientDurationSpin_ }) {
             connect(spin, &QDoubleSpinBox::editingFinished,
                     this, &MainWindow::applyNonFrequencySourceConfiguration);
         }
@@ -1725,8 +1705,8 @@ void MainWindow::loadSettings()
         qWarning() << "Ignoring invalid saved window geometry.";
     }
 
-    centerFrequencySpin_->setValue(settings.centerFrequencyMHz);
-    spanSpin_->setValue(settings.spanMHz);
+    centerFrequencySpin_->setFrequencyHz(settings.centerFrequencyMHz * 1.0e6);
+    spanSpin_->setFrequencyHz(settings.spanMHz * 1.0e6);
     synchronizeStartStopFromCenterSpan();
     sourceFrameRateSpin_->setValue(settings.sourceFrameRate);
     noiseFloorSpin_->setValue(settings.noiseFloorDbfs);
@@ -1735,16 +1715,16 @@ void MainWindow::loadSettings()
         sourceFrameRateSpin_->setEnabled(!settings.unthrottled);
         noiseDeviationSpin_->setValue(settings.noiseDeviationDb);
         tone1EnabledCheck_->setChecked(settings.tone1Enabled);
-        tone1FrequencySpin_->setValue(settings.tone1FrequencyMHz);
+        tone1FrequencySpin_->setFrequencyHz(settings.tone1FrequencyMHz * 1.0e6);
         tone1AmplitudeSpin_->setValue(settings.tone1AmplitudeDbfs);
-        tone1WidthSpin_->setValue(settings.tone1WidthMHz);
+        tone1WidthSpin_->setFrequencyHz(settings.tone1WidthMHz * 1.0e6);
         tone2EnabledCheck_->setChecked(settings.tone2Enabled);
-        tone2FrequencySpin_->setValue(settings.tone2FrequencyMHz);
+        tone2FrequencySpin_->setFrequencyHz(settings.tone2FrequencyMHz * 1.0e6);
         tone2AmplitudeSpin_->setValue(settings.tone2AmplitudeDbfs);
-        tone2WidthSpin_->setValue(settings.tone2WidthMHz);
+        tone2WidthSpin_->setFrequencyHz(settings.tone2WidthMHz * 1.0e6);
         sweepEnabledCheck_->setChecked(settings.sweepEnabled);
-        sweepStartFrequencySpin_->setValue(settings.sweepStartFrequencyMHz);
-        sweepStopFrequencySpin_->setValue(settings.sweepStopFrequencyMHz);
+        sweepStartFrequencySpin_->setFrequencyHz(settings.sweepStartFrequencyMHz * 1.0e6);
+        sweepStopFrequencySpin_->setFrequencyHz(settings.sweepStopFrequencyMHz * 1.0e6);
         const int sweepDirectionIndex = sweepDirectionCombo_->findData(settings.sweepDirection);
         if (sweepDirectionIndex >= 0) {
             sweepDirectionCombo_->setCurrentIndex(sweepDirectionIndex);
@@ -1795,8 +1775,8 @@ void MainWindow::saveSettings() const
 
     AppSettings settings;
     settings.windowGeometry = saveGeometry();
-    settings.centerFrequencyMHz = centerFrequencySpin_->value();
-    settings.spanMHz = spanSpin_->value();
+    settings.centerFrequencyMHz = centerFrequencySpin_->valueMHz();
+    settings.spanMHz = spanSpin_->valueMHz();
     settings.binCount = fftSizeCombo_->currentData().toInt();
     settings.sourceFrameRate = sourceFrameRateSpin_->value();
     settings.noiseFloorDbfs = noiseFloorSpin_->value();
@@ -1804,16 +1784,16 @@ void MainWindow::saveSettings() const
         settings.unthrottled = unthrottledCheck_->isChecked();
         settings.noiseDeviationDb = noiseDeviationSpin_->value();
         settings.tone1Enabled = tone1EnabledCheck_->isChecked();
-        settings.tone1FrequencyMHz = tone1FrequencySpin_->value();
+        settings.tone1FrequencyMHz = tone1FrequencySpin_->valueMHz();
         settings.tone1AmplitudeDbfs = tone1AmplitudeSpin_->value();
-        settings.tone1WidthMHz = tone1WidthSpin_->value();
+        settings.tone1WidthMHz = tone1WidthSpin_->valueMHz();
         settings.tone2Enabled = tone2EnabledCheck_->isChecked();
-        settings.tone2FrequencyMHz = tone2FrequencySpin_->value();
+        settings.tone2FrequencyMHz = tone2FrequencySpin_->valueMHz();
         settings.tone2AmplitudeDbfs = tone2AmplitudeSpin_->value();
-        settings.tone2WidthMHz = tone2WidthSpin_->value();
+        settings.tone2WidthMHz = tone2WidthSpin_->valueMHz();
         settings.sweepEnabled = sweepEnabledCheck_->isChecked();
-        settings.sweepStartFrequencyMHz = sweepStartFrequencySpin_->value();
-        settings.sweepStopFrequencyMHz = sweepStopFrequencySpin_->value();
+        settings.sweepStartFrequencyMHz = sweepStartFrequencySpin_->valueMHz();
+        settings.sweepStopFrequencyMHz = sweepStopFrequencySpin_->valueMHz();
         settings.sweepDirection = sweepDirectionCombo_->currentData().toInt();
         settings.sweepPeriodSeconds = sweepPeriodSpin_->value();
         settings.sweepAmplitudeDbfs = sweepAmplitudeSpin_->value();
@@ -1846,8 +1826,8 @@ void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
         return;
     }
 
-    centerFrequencySpin_->setValue(config.centerFrequencyHz / 1.0e6);
-    spanSpin_->setValue(config.spanHz / 1.0e6);
+    centerFrequencySpin_->setFrequencyHz(config.centerFrequencyHz);
+    spanSpin_->setFrequencyHz(config.spanHz);
     synchronizeStartStopFromCenterSpan();
     sourceFrameRateSpin_->setValue(config.frameRate);
     unthrottledCheck_->setChecked(config.unthrottled);
@@ -1859,17 +1839,17 @@ void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
     const ToneConfig& tone1 = config.tones.empty() ? emptyTone : config.tones[0];
     const ToneConfig& tone2 = config.tones.size() < 2 ? emptyTone : config.tones[1];
     tone1EnabledCheck_->setChecked(tone1.enabled);
-    tone1FrequencySpin_->setValue(tone1.frequencyHz / 1.0e6);
+    tone1FrequencySpin_->setFrequencyHz(tone1.frequencyHz);
     tone1AmplitudeSpin_->setValue(tone1.amplitudeDbfs);
-    tone1WidthSpin_->setValue(tone1.widthHz / 1.0e6);
+    tone1WidthSpin_->setFrequencyHz(tone1.widthHz);
     tone2EnabledCheck_->setChecked(tone2.enabled);
-    tone2FrequencySpin_->setValue(tone2.frequencyHz / 1.0e6);
+    tone2FrequencySpin_->setFrequencyHz(tone2.frequencyHz);
     tone2AmplitudeSpin_->setValue(tone2.amplitudeDbfs);
-    tone2WidthSpin_->setValue(tone2.widthHz / 1.0e6);
+    tone2WidthSpin_->setFrequencyHz(tone2.widthHz);
 
     sweepEnabledCheck_->setChecked(config.sweepEnabled);
-    sweepStartFrequencySpin_->setValue(config.sweepStartHz / 1.0e6);
-    sweepStopFrequencySpin_->setValue(config.sweepStopHz / 1.0e6);
+    sweepStartFrequencySpin_->setFrequencyHz(config.sweepStartHz);
+    sweepStopFrequencySpin_->setFrequencyHz(config.sweepStopHz);
     const int directionIndex = sweepDirectionCombo_->findData(
         static_cast<int>(config.sweepDirection));
     if (directionIndex >= 0) {
@@ -1930,8 +1910,8 @@ SimulationConfig MainWindow::configurationFromUi() const
     SimulationConfig config = simulationControl_
         ? simulationControl_->configuration()
         : SimulationConfig {};
-    config.centerFrequencyHz = centerFrequencySpin_->value() * 1.0e6;
-    config.spanHz = spanSpin_->value() * 1.0e6;
+    config.centerFrequencyHz = centerFrequencySpin_->frequencyHz();
+    config.spanHz = spanSpin_->frequencyHz();
     config.binCount = static_cast<std::size_t>(fftSizeCombo_->currentData().toUInt());
     config.frameRate = sourceFrameRateSpin_->value();
     config.unthrottled = unthrottledCheck_ && unthrottledCheck_->isChecked();
@@ -1946,17 +1926,17 @@ SimulationConfig MainWindow::configurationFromUi() const
     if (simulationControl_) {
         config.tones = {
             ToneConfig { tone1EnabledCheck_->isChecked(),
-                         tone1FrequencySpin_->value() * 1.0e6,
+                         tone1FrequencySpin_->frequencyHz(),
                          static_cast<float>(tone1AmplitudeSpin_->value()),
-                         tone1WidthSpin_->value() * 1.0e6 },
+                         tone1WidthSpin_->frequencyHz() },
             ToneConfig { tone2EnabledCheck_->isChecked(),
-                         tone2FrequencySpin_->value() * 1.0e6,
+                         tone2FrequencySpin_->frequencyHz(),
                          static_cast<float>(tone2AmplitudeSpin_->value()),
-                         tone2WidthSpin_->value() * 1.0e6 }
+                         tone2WidthSpin_->frequencyHz() }
         };
         config.sweepEnabled = sweepEnabledCheck_->isChecked();
-        config.sweepStartHz = sweepStartFrequencySpin_->value() * 1.0e6;
-        config.sweepStopHz = sweepStopFrequencySpin_->value() * 1.0e6;
+        config.sweepStartHz = sweepStartFrequencySpin_->frequencyHz();
+        config.sweepStopHz = sweepStopFrequencySpin_->frequencyHz();
         config.sweepDirection = static_cast<SweepDirection>(
             sweepDirectionCombo_->currentData().toInt());
         config.sweepPeriodSeconds = sweepPeriodSpin_->value();

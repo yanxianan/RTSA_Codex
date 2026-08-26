@@ -156,6 +156,8 @@ add_executable(rtsa_gui_tests
     tst_MainWindow.cpp
     ../src/ui/ApplicationTheme.cpp
     ../src/ui/ApplicationTheme.h
+    ../src/ui/FrequencySpinBox.cpp
+    ../src/ui/FrequencySpinBox.h
     ../src/ui/UnfocusedWheelFilter.h
     ../src/plot/Colormap.cpp
     ../src/plot/Colormap.h

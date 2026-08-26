@@ -89,6 +89,13 @@ void applyApplicationTheme(QApplication& application)
         "QStatusBar { background: #141920; border-top: 1px solid #263238; color: #90a4ae; font-size: 11px; }"
         "QGroupBox { font-weight: bold; border: 1px solid #37474f; border-radius: 4px; margin-top: 8px; padding-top: 8px; }"
         "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 8px; padding: 0 4px; color: #81d4fa; }"
+        "QComboBox { background-color: #1e2631; color: #00e676; border: 1px solid #37474f; border-radius: 3px; padding: 2px 4px; font-weight: bold; min-height: 20px; }"
+        "QComboBox:hover { border-color: #00e676; }"
+        "QComboBox:focus { border-color: #00e676; }"
+        "QComboBox::drop-down { border: none; width: 14px; }"
+        "QDoubleSpinBox, QSpinBox { background-color: #0d141b; color: #eceff1; border: 1px solid #37474f; border-radius: 3px; padding: 2px 4px; min-height: 20px; }"
+        "QDoubleSpinBox:hover, QSpinBox:hover { border-color: #81d4fa; }"
+        "QDoubleSpinBox:focus, QSpinBox:focus { border-color: #00e676; background-color: #101a24; }"
     ));
 }
 

@@ -25,6 +25,8 @@ add_executable(rtsa_app
     app/main.cpp
     ui/ApplicationTheme.cpp
     ui/ApplicationTheme.h
+    ui/FrequencySpinBox.cpp
+    ui/FrequencySpinBox.h
     ui/UnfocusedWheelFilter.h
     plot/Colormap.cpp
     plot/Colormap.h
