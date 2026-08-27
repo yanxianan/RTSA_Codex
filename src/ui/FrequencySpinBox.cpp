@@ -204,7 +204,7 @@ void FrequencySpinBox::stepBy(const int steps)
     const double targetVal = curVal + static_cast<double>(steps) * step;
 
     // Case 1: Stepping down below 1.0 into a smaller unit (e.g. 5 kHz -> 1 kHz -> 999 Hz)
-    if (steps < 0 && targetVal < 1.0 - 1e-9 && curUnit > Unit::Hz) {
+    if (steps < 0 && curVal >= 0.0 && targetVal < 1.0 - 1e-9 && curUnit > Unit::Hz) {
         const auto lowerUnit = static_cast<Unit>(static_cast<int>(curUnit) - 1);
         const double lowerMult = unitMultiplier(lowerUnit);
         const double curMult = unitMultiplier(curUnit);
@@ -236,7 +236,7 @@ void FrequencySpinBox::stepBy(const int steps)
     }
 
     // Case 2: Stepping up across 1000.0 into a higher unit (e.g. 999 Hz -> 1.000 kHz)
-    if (steps > 0 && targetVal >= 1000.0 - 1e-9 && curUnit < Unit::GHz) {
+    if (steps > 0 && curVal >= 0.0 && targetVal >= 1000.0 - 1e-9 && curUnit < Unit::GHz) {
         const auto higherUnit = static_cast<Unit>(static_cast<int>(curUnit) + 1);
         const double higherMult = unitMultiplier(higherUnit);
         const double curMult = unitMultiplier(curUnit);

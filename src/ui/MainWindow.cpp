@@ -735,19 +735,32 @@ void MainWindow::refreshMarkerLabels()
     // 2. 更新活动标记读数主卡片 (Active Marker Card)
     const MarkerMeasurement activeMeasure = plot_->markerMeasurement(active);
     if (activeMeasure.valid) {
-        markerLabel_->setText(tr("M%1:  %2  |  %3 %4%5")
+        const QString targetText = tr("M%1:  %2  |  %3 %4%5")
             .arg(active + 1U)
             .arg(formatFrequency(activeMeasure.frequencyHz))
             .arg(activeMeasure.amplitude, 0, 'f', 2)
             .arg(unit)
-            .arg(frame && frame->metadata.calibrated ? QString() : tr("（未校准）")));
-        markerLabel_->setStyleSheet(QStringLiteral("color: %1; font-weight: bold;").arg(markerColors[active].name()));
+            .arg(frame && frame->metadata.calibrated ? QString() : tr("（未校准）"));
+        if (markerLabel_->text() != targetText) {
+            markerLabel_->setText(targetText);
+        }
+        const QString targetStyle = QStringLiteral("color: %1; font-weight: bold;").arg(markerColors[active].name());
+        if (markerLabel_->styleSheet() != targetStyle) {
+            markerLabel_->setStyleSheet(targetStyle);
+        }
     } else {
-        markerLabel_->setText(tr("M%1 未启用 (点击启用或点击搜索峰值)").arg(active + 1U));
-        markerLabel_->setStyleSheet(QStringLiteral("color: #8899A6; font-weight: normal;"));
+        const QString targetText = tr("M%1 未启用 (点击启用或点击搜索峰值)").arg(active + 1U);
+        if (markerLabel_->text() != targetText) {
+            markerLabel_->setText(targetText);
+        }
+        const QString targetStyle = QStringLiteral("color: #8899A6; font-weight: normal;");
+        if (markerLabel_->styleSheet() != targetStyle) {
+            markerLabel_->setStyleSheet(targetStyle);
+        }
     }
 
     // 3. 自动计算活动标记的 Delta 差分值 (无需配置，默认自动计算)
+    QString deltaTargetText;
     if (active == 0U) {
         bool hasOther = false;
         for (std::size_t i = 1; i < kSpectrumMarkerCount; ++i) {
@@ -755,38 +768,52 @@ void MainWindow::refreshMarkerLabels()
                 const auto d = plot_->deltaMarkerMeasurement(i, 0U);
                 if (d.valid) {
                     const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
-                    activeMarkerDeltaLabel_->setText(tr("M1 [基准] | 与 M%1 差: ΔF = %2, ΔA = %3%4 %5")
+                    deltaTargetText = tr("M1 [基准] | 与 M%1 差: ΔF = %2, ΔA = %3%4 %5")
                         .arg(i + 1U)
                         .arg(formatFrequencyDelta(d.frequencyDeltaHz))
                         .arg(signA)
                         .arg(d.amplitudeDelta, 0, 'f', 2)
-                        .arg(unit));
+                        .arg(unit);
                     hasOther = true;
                     break;
                 }
             }
         }
         if (!hasOther) {
-            activeMarkerDeltaLabel_->setText(tr("M1 [基准参考] (启用多个标记自动计算 Δ)"));
+            deltaTargetText = tr("M1 [基准参考] (启用多个标记自动计算 Δ)");
         }
     } else {
         const auto d = plot_->deltaMarkerMeasurement(active, 0U);
         if (d.valid) {
             const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
-            activeMarkerDeltaLabel_->setText(tr("Δ(M%1 - M1):  %2  |  %3%4 %5")
+            deltaTargetText = tr("Δ(M%1 - M1):  %2  |  %3%4 %5")
                 .arg(active + 1U)
                 .arg(formatFrequencyDelta(d.frequencyDeltaHz))
                 .arg(signA)
                 .arg(d.amplitudeDelta, 0, 'f', 2)
-                .arg(unit));
+                .arg(unit);
         } else if (isActEnabled && !plot_->isMarkerEnabled(0U)) {
-            activeMarkerDeltaLabel_->setText(tr("提示: 请同时启用 M1 作为基准参考"));
+            deltaTargetText = tr("提示: 请同时启用 M1 作为基准参考");
         } else {
-            activeMarkerDeltaLabel_->setText(tr("Δ 差分: ---"));
+            deltaTargetText = tr("Δ 差分: ---");
         }
+    }
+    if (activeMarkerDeltaLabel_->text() != deltaTargetText) {
+        activeMarkerDeltaLabel_->setText(deltaTargetText);
     }
 
     // 4. 更新全标记多路读数表 (Multi-Marker Table M1~M4)
+    auto updateItemText = [](QTableWidgetItem* item, const QString& text) {
+        if (item && item->text() != text) {
+            item->setText(text);
+        }
+    };
+    auto updateItemBg = [](QTableWidgetItem* item, const QColor& color) {
+        if (item && item->background().color() != color) {
+            item->setBackground(color);
+        }
+    };
+
     for (std::size_t i = 0; i < kSpectrumMarkerCount; ++i) {
         const MarkerMeasurement m = plot_->markerMeasurement(i);
         auto* itemM = markerTable_->item(static_cast<int>(i), 0);
@@ -797,35 +824,33 @@ void MainWindow::refreshMarkerLabels()
         const bool isRowActive = (i == active);
 
         if (m.valid) {
-            itemF->setText(formatFrequency(m.frequencyHz));
-            itemA->setText(QStringLiteral("%1 %2").arg(m.amplitude, 0, 'f', 2).arg(unit));
+            updateItemText(itemF, formatFrequency(m.frequencyHz));
+            updateItemText(itemA, QStringLiteral("%1 %2").arg(m.amplitude, 0, 'f', 2).arg(unit));
             if (i == 0U) {
-                itemD->setText(tr("[基准参考]"));
+                updateItemText(itemD, tr("[基准参考]"));
             } else {
                 const auto d = plot_->deltaMarkerMeasurement(i, 0U);
                 if (d.valid) {
                     const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
-                    itemD->setText(QStringLiteral("ΔF: %1, ΔA: %2%3 dB")
+                    updateItemText(itemD, QStringLiteral("ΔF: %1, ΔA: %2%3 dB")
                         .arg(formatFrequencyDelta(d.frequencyDeltaHz))
                         .arg(signA)
                         .arg(d.amplitudeDelta, 0, 'f', 2));
                 } else {
-                    itemD->setText(QStringLiteral("--"));
+                    updateItemText(itemD, QStringLiteral("--"));
                 }
             }
-            itemM->setText(QStringLiteral("● M%1%2").arg(i + 1U).arg(i == 0 ? tr(" [Ref]") : QString()));
+            updateItemText(itemM, QStringLiteral("● M%1%2").arg(i + 1U).arg(i == 0 ? tr(" [Ref]") : QString()));
         } else {
-            itemF->setText(QStringLiteral("--"));
-            itemA->setText(QStringLiteral("--"));
-            itemD->setText(i == 0 ? tr("[基准]") : QStringLiteral("--"));
-            itemM->setText(QStringLiteral("○ M%1").arg(i + 1U));
+            updateItemText(itemF, QStringLiteral("--"));
+            updateItemText(itemA, QStringLiteral("--"));
+            updateItemText(itemD, i == 0 ? tr("[基准]") : QStringLiteral("--"));
+            updateItemText(itemM, QStringLiteral("○ M%1").arg(i + 1U));
         }
 
         const QColor rowBg = isRowActive ? QColor(0, 166, 255, 45) : QColor(0, 0, 0, 0);
         for (int col = 0; col < 4; ++col) {
-            if (auto* cell = markerTable_->item(static_cast<int>(i), col)) {
-                cell->setBackground(rowBg);
-            }
+            updateItemBg(markerTable_->item(static_cast<int>(i), col), rowBg);
         }
     }
 }

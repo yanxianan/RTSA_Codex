@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace rtsa {
 namespace {
@@ -115,30 +116,18 @@ void WaterfallPlotWidget::resizeImageBuffer(const int width, const int height)
     newImage.fill(0);
 
     if (!bufferImage_.isNull() && rowCount_ > 0) {
-        // Preserve existing history into new image buffer
-        QPainter p(&newImage);
-        if (rowCount_ < historyDepth_) {
-            const int h = std::min(rowCount_, newHeight);
-            const QRect src(0, headRow_, bufferWidth_, h);
-            const QRect dst(0, newHeight - h, newWidth, h);
-            p.drawImage(dst, bufferImage_, src);
-            headRow_ = newHeight - h;
-        } else {
-            const int h1 = std::min(historyDepth_ - headRow_, newHeight);
-            const QRect src1(0, headRow_, bufferWidth_, h1);
-            const QRect dst1(0, 0, newWidth, h1);
-            p.drawImage(dst1, bufferImage_, src1);
-
-            const int h2 = std::min(headRow_, newHeight - h1);
-            if (h2 > 0) {
-                const QRect src2(0, 0, bufferWidth_, h2);
-                const QRect dst2(0, h1, newWidth, h2);
-                p.drawImage(dst2, bufferImage_, src2);
-            }
-            headRow_ = 0;
+        // Copy scanlines directly for Format_Indexed8 (cannot use QPainter on Indexed8 image)
+        const int copyRows = std::min(rowCount_, newHeight);
+        for (int i = 0; i < copyRows; ++i) {
+            const int oldRow = (headRow_ + i) % bufferImage_.height();
+            const int newRow = (newHeight - copyRows + i) % newHeight;
+            const uchar* srcScan = bufferImage_.constScanLine(oldRow);
+            uchar* dstScan = newImage.scanLine(newRow);
+            const int copyCols = std::min(bufferWidth_, newWidth);
+            std::memcpy(dstScan, srcScan, static_cast<std::size_t>(copyCols));
         }
-        p.end();
-        rowCount_ = std::min(rowCount_, newHeight);
+        headRow_ = (newHeight - copyRows) % newHeight;
+        rowCount_ = copyRows;
     } else {
         headRow_ = 0;
         rowCount_ = 0;
@@ -360,8 +349,10 @@ void WaterfallPlotWidget::drawGridAndAxes(QPainter& painter)
         const double freq = startHz + spanHz * (static_cast<double>(i) / kDivisions);
         const QString text = formatFrequency(freq);
         const int textWidth = metrics.horizontalAdvance(text);
-        int x = plotRect_.left() + static_cast<int>(std::round(i * colStep)) - textWidth / 2;
-        x = std::clamp(x, 2, width() - textWidth - 2);
+        const int targetX = plotRect_.left() + static_cast<int>(std::round(i * colStep)) - textWidth / 2;
+        const int minX = 2;
+        const int maxX = std::max(minX, width() - textWidth - 2);
+        const int x = std::clamp(targetX, minX, maxX);
         painter.drawText(x, plotRect_.bottom() + 18, text);
     }
 

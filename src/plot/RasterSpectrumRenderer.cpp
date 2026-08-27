@@ -130,7 +130,7 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
         painter.drawPolyline(peakPolyline_.constData(), peakPolyline_.size());
     }
 
-    if (frame_ && !frame_->bins.empty()) {
+    if (frame_ && !frame_->bins.empty() && plotRect_.width() > 10 && plotRect_.height() > 10) {
         const std::array<QColor, kSpectrumMarkerCount> colors {
             QColor(255, 213, 79),  // M1: 琥珀金黄 (Amber Yellow)
             QColor(0, 229, 255),   // M2: 科技青蓝 (Electric Cyan)
@@ -138,6 +138,9 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
             QColor(0, 230, 118)    // M4: 明亮翠绿 (Bright Green)
         };
         const QFont originalFont = painter.font();
+
+        const int minY = std::min(plotRect_.top(), plotRect_.bottom());
+        const int maxY = std::max(plotRect_.top(), plotRect_.bottom());
 
         for (std::size_t markerIndex = 0; markerIndex < markerBins_.size(); ++markerIndex) {
             if (!markerBins_[markerIndex]) {
@@ -150,9 +153,7 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
                 : 0.0;
             const int x = plotRect_.left() + static_cast<int>(std::lround(
                 ratio * static_cast<double>(plotRect_.width() - 1)));
-            const int y = std::clamp(yForAmplitude(frame_->bins[bin]),
-                                     plotRect_.top(),
-                                     plotRect_.bottom());
+            const int y = std::clamp(yForAmplitude(frame_->bins[bin]), minY, maxY);
             const bool active = markerIndex == activeMarkerIndex_;
             const QColor markerColor = colors[markerIndex];
 
@@ -188,7 +189,9 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
             if (tagY < plotRect_.top() + 2) {
                 tagY = y + 4; // 若靠近绘图区顶部则放置在顶点下方
             }
-            const int tagX = std::clamp(x - tagW / 2, plotRect_.left() + 2, plotRect_.right() - tagW - 2);
+            const int minTagX = plotRect_.left() + 2;
+            const int maxTagX = std::max(minTagX, plotRect_.right() - tagW - 2);
+            const int tagX = std::clamp(x - tagW / 2, minTagX, maxTagX);
             const QRect tagRect(tagX, tagY, tagW, tagH);
 
             painter.fillRect(tagRect, QColor(10, 15, 22, active ? 230 : 180));
