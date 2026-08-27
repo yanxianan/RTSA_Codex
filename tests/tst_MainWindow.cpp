@@ -9,6 +9,8 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPushButton>
 #include <QtTest>
 
@@ -70,6 +72,8 @@ private slots:
     void unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges();
     void frequencySpinBoxSeparatesValueAndUnitWithAutoScaling();
     void frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz();
+    void displayMenuProvidesThemesTraceColorsLineWidthAndGrid();
+    void displayAppearanceCustomizationsApplyToSpectrumPlot();
 };
 
 namespace {
@@ -618,6 +622,100 @@ void MainWindowTests::frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz()
     QCOMPARE(spin.unit(), FrequencySpinBox::Unit::MHz);
     QCOMPARE(spin.unitComboBox()->currentText(), QStringLiteral("MHz"));
     QCOMPARE(spin.value(), 999.0);
+}
+
+void MainWindowTests::displayMenuProvidesThemesTraceColorsLineWidthAndGrid()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    auto* bar = window.menuBar();
+    QVERIFY(bar);
+
+    QMenu* displayMenu = nullptr;
+    for (auto* action : bar->actions()) {
+        if (action->text().contains(QStringLiteral("显示"))) {
+            displayMenu = action->menu();
+            break;
+        }
+    }
+    QVERIFY2(displayMenu != nullptr, "Display menu '显示 (&D)' must be present on the top menu bar");
+
+    // Check submenus and actions within displayMenu
+    bool foundViewMode = false;
+    bool foundThemes = false;
+    bool foundTraceColors = false;
+    bool foundLineWidth = false;
+    bool foundGrid = false;
+    bool foundColormap = false;
+
+    for (auto* action : displayMenu->actions()) {
+        const QString text = action->text();
+        if (text.contains(QStringLiteral("视图模式"))) {
+            foundViewMode = true;
+            QVERIFY(action->menu());
+            QCOMPARE(action->menu()->actions().size(), 3);
+        } else if (text.contains(QStringLiteral("绘图区主题"))) {
+            foundThemes = true;
+            QVERIFY(action->menu());
+            QVERIFY(action->menu()->actions().size() >= 5);
+        } else if (text.contains(QStringLiteral("曲线颜色"))) {
+            foundTraceColors = true;
+            QVERIFY(action->menu());
+            QVERIFY(action->menu()->actions().size() >= 7);
+        } else if (text.contains(QStringLiteral("曲线线宽"))) {
+            foundLineWidth = true;
+            QVERIFY(action->menu());
+            QCOMPARE(action->menu()->actions().size(), 4);
+        } else if (text.contains(QStringLiteral("网格"))) {
+            foundGrid = true;
+            QVERIFY(action->isCheckable());
+            QVERIFY(action->isChecked());
+        } else if (text.contains(QStringLiteral("瀑布图色图"))) {
+            foundColormap = true;
+            QVERIFY(action->menu());
+            QCOMPARE(action->menu()->actions().size(), 5);
+        }
+    }
+
+    QVERIFY(foundViewMode);
+    QVERIFY(foundThemes);
+    QVERIFY(foundTraceColors);
+    QVERIFY(foundLineWidth);
+    QVERIFY(foundGrid);
+    QVERIFY(foundColormap);
+}
+
+void MainWindowTests::displayAppearanceCustomizationsApplyToSpectrumPlot()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
+    QVERIFY(plot);
+
+    // 1. Theme switching
+    window.setPlotTheme(2); // Deep Navy
+    window.setPlotTheme(1); // Light
+    window.setPlotTheme(3); // Pitch Black
+    window.setPlotTheme(0); // Classic Dark
+
+    // 2. Trace color preset switching
+    window.setTraceColorPreset(1); // Cyan Blue
+    window.setTraceColorPreset(4); // Industrial Orange
+    window.setTraceColorPreset(0); // Emerald Green
+
+    // 3. Line width switching
+    window.setTraceLineWidth(3);
+    window.setTraceLineWidth(1);
+
+    // 4. Grid visibility toggling
+    window.setGridVisible(false);
+    window.setGridVisible(true);
+
+    // 5. View mode switching
+    window.setDisplayViewMode(0); // Spectrum Only
+    QVERIFY(!plot->isHidden());
+    window.setDisplayViewMode(1); // Waterfall Only
+    QVERIFY(plot->isHidden());
+    window.setDisplayViewMode(2); // Dual View
+    QVERIFY(!plot->isHidden());
 }
 
 } // namespace rtsa

@@ -41,19 +41,30 @@ void RasterSpectrumRenderer::setAmplitudeScale(const float referenceLevel,
 void RasterSpectrumRenderer::setAppearance(const QColor& traceColor,
                                            const int traceWidth,
                                            const bool gridVisible,
-                                           const bool lightTheme)
+                                           const int themeIndex,
+                                           const QColor& customBgColor)
 {
     const QColor safeColor = traceColor.isValid() ? traceColor : QColor(0, 235, 180);
     const int safeWidth = std::clamp(traceWidth, 1, 4);
     if (traceColor_ == safeColor && traceWidth_ == safeWidth
-        && gridVisible_ == gridVisible && lightTheme_ == lightTheme) {
+        && gridVisible_ == gridVisible && themeIndex_ == themeIndex
+        && customBgColor_ == customBgColor) {
         return;
     }
     traceColor_ = safeColor;
     traceWidth_ = safeWidth;
     gridVisible_ = gridVisible;
-    lightTheme_ = lightTheme;
+    themeIndex_ = themeIndex;
+    customBgColor_ = customBgColor;
     staticLayerDirty_ = true;
+}
+
+void RasterSpectrumRenderer::setAppearance(const QColor& traceColor,
+                                           const int traceWidth,
+                                           const bool gridVisible,
+                                           const bool lightTheme)
+{
+    setAppearance(traceColor, traceWidth, gridVisible, lightTheme ? 1 : 0, QColor());
 }
 
 void RasterSpectrumRenderer::setFrame(ConstSpectrumFramePtr frame)
@@ -197,11 +208,67 @@ void RasterSpectrumRenderer::rebuildStaticLayer()
     }
 
     staticLayer_ = QImage(widgetSize_, QImage::Format_ARGB32_Premultiplied);
-    const QColor windowColor = lightTheme_ ? QColor(232, 236, 240) : QColor(15, 20, 27);
-    const QColor plotColor = lightTheme_ ? QColor(250, 252, 253) : QColor(4, 9, 14);
-    const QColor gridColor = lightTheme_ ? QColor(195, 203, 210) : QColor(53, 66, 78);
-    const QColor borderColor = lightTheme_ ? QColor(95, 105, 115) : QColor(125, 142, 158);
-    const QColor textColor = lightTheme_ ? QColor(35, 42, 48) : QColor(195, 207, 218);
+    QColor windowColor;
+    QColor plotColor;
+    QColor gridColor;
+    QColor borderColor;
+    QColor textColor;
+
+    switch (themeIndex_) {
+    case 1: // 明亮浅色 (High Contrast Light)
+        windowColor = QColor(232, 236, 240);
+        plotColor = QColor(250, 252, 253);
+        gridColor = QColor(195, 203, 210);
+        borderColor = QColor(95, 105, 115);
+        textColor = QColor(35, 42, 48);
+        break;
+    case 2: // 深海科技 (Deep Navy)
+        windowColor = QColor(13, 31, 48);
+        plotColor = QColor(7, 19, 30);
+        gridColor = QColor(26, 59, 92);
+        borderColor = QColor(0, 229, 255);
+        textColor = QColor(128, 216, 255);
+        break;
+    case 3: // 复古纯黑 (Pitch Black / OLED)
+        windowColor = QColor(10, 10, 10);
+        plotColor = QColor(0, 0, 0);
+        gridColor = QColor(38, 38, 38);
+        borderColor = QColor(64, 64, 64);
+        textColor = QColor(0, 230, 118);
+        break;
+    case 4: // 自定义背景颜色 (Custom Background)
+        if (customBgColor_.isValid()) {
+            plotColor = customBgColor_;
+            const int l = customBgColor_.lightness();
+            if (l >= 128) {
+                windowColor = customBgColor_.darker(108);
+                gridColor = customBgColor_.darker(125);
+                borderColor = customBgColor_.darker(160);
+                textColor = QColor(25, 30, 35);
+            } else {
+                windowColor = customBgColor_.lighter(130);
+                gridColor = customBgColor_.lighter(180);
+                borderColor = customBgColor_.lighter(240);
+                textColor = QColor(220, 230, 240);
+            }
+        } else {
+            windowColor = QColor(15, 20, 27);
+            plotColor = QColor(4, 9, 14);
+            gridColor = QColor(53, 66, 78);
+            borderColor = QColor(125, 142, 158);
+            textColor = QColor(195, 207, 218);
+        }
+        break;
+    case 0: // 经典深黑 (Classic Dark)
+    default:
+        windowColor = QColor(15, 20, 27);
+        plotColor = QColor(4, 9, 14);
+        gridColor = QColor(53, 66, 78);
+        borderColor = QColor(125, 142, 158);
+        textColor = QColor(195, 207, 218);
+        break;
+    }
+
     staticLayer_.fill(windowColor);
     QPainter painter(&staticLayer_);
     painter.setRenderHint(QPainter::Antialiasing, false);

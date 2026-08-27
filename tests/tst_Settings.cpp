@@ -56,10 +56,12 @@ void SettingsTests::validSettingsRoundTrip()
     expected.transientDurationSeconds = 1.25;
     expected.traceMode = 2;
     expected.averageCount = 32;
-    expected.plotColorPreset = 2;
+    expected.plotColorPreset = 6;
+    expected.customTraceColorHex = QStringLiteral("#ff4081");
     expected.plotLineWidth = 3;
     expected.plotGridVisible = false;
-    expected.plotTheme = 1;
+    expected.plotTheme = 4;
+    expected.customThemeColorHex = QStringLiteral("#07131e");
     expected.displayViewMode = 1;
     expected.waterfallColormap = 2;
     expected.waterfallHistoryDepth = 256;
@@ -87,9 +89,11 @@ void SettingsTests::validSettingsRoundTrip()
     QCOMPARE(loaded.settings.transientDurationSeconds,
              expected.transientDurationSeconds);
     QCOMPARE(loaded.settings.plotColorPreset, expected.plotColorPreset);
+    QCOMPARE(loaded.settings.customTraceColorHex, expected.customTraceColorHex);
     QCOMPARE(loaded.settings.plotLineWidth, expected.plotLineWidth);
     QCOMPARE(loaded.settings.plotGridVisible, expected.plotGridVisible);
     QCOMPARE(loaded.settings.plotTheme, expected.plotTheme);
+    QCOMPARE(loaded.settings.customThemeColorHex, expected.customThemeColorHex);
 }
 
 void SettingsTests::saveRequiresAtomicSync()

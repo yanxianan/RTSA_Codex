@@ -14,6 +14,7 @@
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDebug>
@@ -27,11 +28,13 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QKeySequence>
 #include <QMenuBar>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
@@ -47,6 +50,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
@@ -55,7 +59,23 @@
 namespace rtsa {
 namespace {
 
-QString sourceStateText(const SourceState state)
+constexpr std::array<QRgb, 6> kClassicTraceRgb = {
+    0xFF00EBB4, // 0: 经典翠绿 (Emerald Green)
+    0xFF00A6FF, // 1: 科技青蓝 (Cyan Blue)
+    0xFFFFCD37, // 2: 琥珀明黄 (Amber Yellow)
+    0xFFEBF0F5, // 3: 纯净亮白 (Pure White)
+    0xFFFF6D00, // 4: 工业烈橙 (Industrial Orange)
+    0xFFFF4081  // 5: 荧光洋红 (Neon Magenta)
+};
+
+constexpr std::array<QRgb, 4> kClassicThemeRgb = {
+    0xFF04090E, // 0: 经典深黑 (Classic Dark)
+    0xFFFAFCFD, // 1: 明亮浅色 (High Contrast Light)
+    0xFF07131E, // 2: 深海科技 (Deep Navy)
+    0xFF000000  // 3: 复古纯黑 (Pitch Black)
+};
+
+[[maybe_unused]] QString sourceStateText(const SourceState state)
 {
     switch (state) {
     case SourceState::Initialized:
@@ -394,11 +414,155 @@ void MainWindow::applyVerticalScale()
 
 void MainWindow::applyPlotAppearance()
 {
-    const QColor color = plotColorCombo_->currentData().value<QColor>();
-    plot_->setAppearance(color,
-                         plotLineWidthSpin_->value(),
-                         plotGridCheck_->isChecked(),
-                         plotThemeCombo_->currentData().toInt() == 1);
+    if (!plot_) {
+        return;
+    }
+    const QColor traceColor = (plotColorPreset_ >= 0 && plotColorPreset_ < static_cast<int>(kClassicTraceRgb.size()))
+        ? QColor(kClassicTraceRgb[plotColorPreset_])
+        : (customTraceColor_.isValid() ? customTraceColor_ : QColor(0, 235, 180));
+
+    plot_->setAppearance(traceColor,
+                         plotLineWidth_,
+                         plotGridVisible_,
+                         plotTheme_,
+                         customThemeColor_);
+}
+
+void MainWindow::setPlotTheme(const int themeIndex)
+{
+    plotTheme_ = themeIndex;
+    if (themeActionGroup_) {
+        for (auto* action : themeActionGroup_->actions()) {
+            if (action->data().toInt() == themeIndex) {
+                const QSignalBlocker blocker(themeActionGroup_);
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+    applyPlotAppearance();
+}
+
+void MainWindow::chooseCustomThemeColor()
+{
+    const QColor initial = customThemeColor_.isValid() ? customThemeColor_ : QColor(4, 9, 14);
+    const QColor chosen = QColorDialog::getColor(initial, this, tr("选择绘图区自定义背景颜色"));
+    if (chosen.isValid()) {
+        customThemeColor_ = chosen;
+        plotTheme_ = 4; // Custom
+        if (customThemeAction_) {
+            QPixmap pix(14, 14);
+            pix.fill(chosen);
+            customThemeAction_->setIcon(QIcon(pix));
+            const QSignalBlocker blocker(themeActionGroup_);
+            customThemeAction_->setChecked(true);
+        }
+        applyPlotAppearance();
+    } else {
+        setPlotTheme(plotTheme_);
+    }
+}
+
+void MainWindow::setTraceColorPreset(const int presetIndex)
+{
+    plotColorPreset_ = presetIndex;
+    if (traceColorActionGroup_) {
+        for (auto* action : traceColorActionGroup_->actions()) {
+            if (action->data().toInt() == presetIndex) {
+                const QSignalBlocker blocker(traceColorActionGroup_);
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+    applyPlotAppearance();
+}
+
+void MainWindow::chooseCustomTraceColor()
+{
+    const QColor initial = customTraceColor_.isValid() ? customTraceColor_ : QColor(0, 235, 180);
+    const QColor chosen = QColorDialog::getColor(initial, this, tr("选择自定义曲线颜色"));
+    if (chosen.isValid()) {
+        customTraceColor_ = chosen;
+        plotColorPreset_ = 6; // Custom
+        if (customTraceColorAction_) {
+            QPixmap pix(14, 14);
+            pix.fill(chosen);
+            customTraceColorAction_->setIcon(QIcon(pix));
+            const QSignalBlocker blocker(traceColorActionGroup_);
+            customTraceColorAction_->setChecked(true);
+        }
+        applyPlotAppearance();
+    } else {
+        setTraceColorPreset(plotColorPreset_);
+    }
+}
+
+void MainWindow::setTraceLineWidth(const int width)
+{
+    plotLineWidth_ = std::clamp(width, 1, 4);
+    if (lineWidthActionGroup_) {
+        for (auto* action : lineWidthActionGroup_->actions()) {
+            if (action->data().toInt() == plotLineWidth_) {
+                const QSignalBlocker blocker(lineWidthActionGroup_);
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+    applyPlotAppearance();
+}
+
+void MainWindow::setGridVisible(const bool visible)
+{
+    plotGridVisible_ = visible;
+    if (gridAction_ && gridAction_->isChecked() != visible) {
+        const QSignalBlocker blocker(gridAction_);
+        gridAction_->setChecked(visible);
+    }
+    applyPlotAppearance();
+}
+
+void MainWindow::setDisplayViewMode(const int mode)
+{
+    if (displayViewModeCombo_) {
+        const int index = displayViewModeCombo_->findData(mode);
+        if (index >= 0 && displayViewModeCombo_->currentIndex() != index) {
+            const QSignalBlocker blocker(displayViewModeCombo_);
+            displayViewModeCombo_->setCurrentIndex(index);
+        }
+    }
+    if (viewModeActionGroup_) {
+        for (auto* action : viewModeActionGroup_->actions()) {
+            if (action->data().toInt() == mode) {
+                const QSignalBlocker blocker(viewModeActionGroup_);
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+    applyDisplayViewMode();
+}
+
+void MainWindow::setWaterfallColormap(const int colormap)
+{
+    if (waterfallColormapCombo_) {
+        const int index = waterfallColormapCombo_->findData(colormap);
+        if (index >= 0 && waterfallColormapCombo_->currentIndex() != index) {
+            const QSignalBlocker blocker(waterfallColormapCombo_);
+            waterfallColormapCombo_->setCurrentIndex(index);
+        }
+    }
+    if (colormapActionGroup_) {
+        for (auto* action : colormapActionGroup_->actions()) {
+            if (action->data().toInt() == colormap) {
+                const QSignalBlocker blocker(colormapActionGroup_);
+                action->setChecked(true);
+                break;
+            }
+        }
+    }
+    applyWaterfallSettings();
 }
 
 void MainWindow::applyDisplayViewMode()
@@ -758,6 +922,7 @@ void MainWindow::showShortcutsDialog()
         "<tr><td><b>F8</b></td><td>停止采集</td></tr>"
         "<tr><td><b>F11</b></td><td>全屏模式切换 (ESC 退出)</td></tr>"
         "<tr><td><b>Ctrl + R</b></td><td>自动幅度刻度 (Auto Range)</td></tr>"
+        "<tr><td><b>Ctrl + G</b></td><td>显示 / 隐藏网格 (Toggle Grid)</td></tr>"
         "<tr><td><b>Ctrl + 0</b></td><td>重置频率范围 (Reset Span)</td></tr>"
         "<tr><td><b>M</b></td><td>活动标记峰值搜索 (Peak Search)</td></tr>"
         "<tr><td><b>Ctrl + E</b></td><td>导出当前频谱为 CSV 数据</td></tr>"
@@ -789,8 +954,10 @@ void MainWindow::showUserGuideDialog()
         "在【频率与幅度】选项卡中设置中心频率、Span 频宽、FFT 频点数与输入帧率。支持通过滚轮或键盘微调，未聚焦时滚轮不误触。</li>"
         "<li><b>幅度与坐标刻度</b>：<br>"
         "设置参考电平 (Ref Level)、底电平 (Bottom Level) 或直接使用 <code>Ctrl+R</code> 自动适配最佳动态范围。</li>"
+        "<li><b>显示与视觉定制</b>：<br>"
+        "通过顶部【显示】菜单，可实时切换经典深黑/深海科技/复古纯黑/明亮浅色主题或自定义绘图区背景色，并提供 6 种经典荧光曲线颜色、自定义色及 1~4 px 线宽与网格开关。</li>"
         "<li><b>时频瀑布图分析</b>：<br>"
-        "在【迹线与瀑布】中可切换频谱、瀑布图或双屏联动。瀑布图严格按时间自顶向底连续流动，支持 ClassicRainbow、R&S、Ironbow 等专业色谱。</li>"
+        "在【迹线与瀑布】中可切换频谱、瀑布图或双屏联动。瀑布图严格按时间自顶向底连续流动，支持 Turbo、Viridis、Jet 等专业色谱。</li>"
         "<li><b>标记与差分测量</b>：<br>"
         "在【标记与测量】中支持 M1~M4 四组标记与 Delta 差分模式，按 <code>M</code> 键快速锁定最高峰值。</li>"
         "<li><b>信道功率与选段分析</b>：<br>"
@@ -843,32 +1010,162 @@ void MainWindow::buildMenuBar()
     fileMenu->addSeparator();
     fileMenu->addAction(tr("退出 (&X)"), QKeySequence(Qt::ALT | Qt::Key_F4), this, &QWidget::close);
 
-    // 2. View Menu
-    auto* viewMenu = bar->addMenu(tr("视图 (&V)"));
-    auto* viewModeGroup = new QActionGroup(this);
+    // 2. Display Menu (显示菜单)
+    auto* displayMenu = bar->addMenu(tr("显示 (&D)"));
 
-    auto* spectrumOnlyAction = viewMenu->addAction(tr("仅频谱图 (Spectrum Only)"), [this] {
-        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(0);
-    });
-    spectrumOnlyAction->setCheckable(true);
-    viewModeGroup->addAction(spectrumOnlyAction);
+    // 2.1 视图模式
+    auto* viewModeMenu = displayMenu->addMenu(tr("视图模式 (&V)"));
+    viewModeActionGroup_ = new QActionGroup(this);
 
-    auto* waterfallOnlyAction = viewMenu->addAction(tr("仅瀑布图 (Waterfall Only)"), [this] {
-        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(1);
-    });
-    waterfallOnlyAction->setCheckable(true);
-    viewModeGroup->addAction(waterfallOnlyAction);
-
-    auto* dualViewAction = viewMenu->addAction(tr("双视图分屏 (Dual View)"), [this] {
-        if (displayViewModeCombo_) displayViewModeCombo_->setCurrentIndex(2);
+    auto* dualViewAction = viewModeMenu->addAction(tr("双视图分屏 (Dual View)"), [this] {
+        setDisplayViewMode(2);
     });
     dualViewAction->setCheckable(true);
     dualViewAction->setChecked(true);
-    viewModeGroup->addAction(dualViewAction);
+    dualViewAction->setData(2);
+    viewModeActionGroup_->addAction(dualViewAction);
 
-    viewMenu->addSeparator();
-    viewMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
-    viewMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
+    auto* spectrumOnlyAction = viewModeMenu->addAction(tr("仅频谱图 (Spectrum Only)"), [this] {
+        setDisplayViewMode(0);
+    });
+    spectrumOnlyAction->setCheckable(true);
+    spectrumOnlyAction->setData(0);
+    viewModeActionGroup_->addAction(spectrumOnlyAction);
+
+    auto* waterfallOnlyAction = viewModeMenu->addAction(tr("仅瀑布图 (Waterfall Only)"), [this] {
+        setDisplayViewMode(1);
+    });
+    waterfallOnlyAction->setCheckable(true);
+    waterfallOnlyAction->setData(1);
+    viewModeActionGroup_->addAction(waterfallOnlyAction);
+
+    displayMenu->addSeparator();
+
+    // 2.2 绘图区主题 (Plot Area Theme)
+    auto* themeMenu = displayMenu->addMenu(tr("绘图区主题 (&T)"));
+    themeActionGroup_ = new QActionGroup(this);
+
+    struct ThemeEntry {
+        QString name;
+        int index;
+        QRgb rgb;
+    };
+    const std::array<ThemeEntry, 4> themeEntries {{
+        { tr("经典深黑 (Classic Dark)"), 0, kClassicThemeRgb[0] },
+        { tr("深海科技 (Deep Navy)"), 2, kClassicThemeRgb[2] },
+        { tr("复古纯黑 (Pitch Black)"), 3, kClassicThemeRgb[3] },
+        { tr("明亮浅色 (High Contrast Light)"), 1, kClassicThemeRgb[1] }
+    }};
+
+    for (const auto& entry : themeEntries) {
+        QPixmap pix(14, 14);
+        pix.fill(QColor(entry.rgb));
+        auto* action = themeMenu->addAction(QIcon(pix), entry.name, [this, idx = entry.index] {
+            setPlotTheme(idx);
+        });
+        action->setCheckable(true);
+        action->setData(entry.index);
+        if (entry.index == 0) action->setChecked(true);
+        themeActionGroup_->addAction(action);
+    }
+    themeMenu->addSeparator();
+    customThemeAction_ = themeMenu->addAction(tr("自定义背景颜色 (&B)..."), this, &MainWindow::chooseCustomThemeColor);
+    customThemeAction_->setCheckable(true);
+    customThemeAction_->setData(4);
+    themeActionGroup_->addAction(customThemeAction_);
+
+    // 2.3 曲线颜色 (Trace Color)
+    auto* colorMenu = displayMenu->addMenu(tr("曲线颜色 (&C)"));
+    traceColorActionGroup_ = new QActionGroup(this);
+
+    struct ColorEntry {
+        QString name;
+        int index;
+        QRgb rgb;
+    };
+    const std::array<ColorEntry, 6> colorEntries {{
+        { tr("经典翠绿 (Emerald Green)"), 0, kClassicTraceRgb[0] },
+        { tr("科技青蓝 (Cyan Blue)"), 1, kClassicTraceRgb[1] },
+        { tr("琥珀明黄 (Amber Yellow)"), 2, kClassicTraceRgb[2] },
+        { tr("纯净亮白 (Pure White)"), 3, kClassicTraceRgb[3] },
+        { tr("工业烈橙 (Industrial Orange)"), 4, kClassicTraceRgb[4] },
+        { tr("荧光洋红 (Neon Magenta)"), 5, kClassicTraceRgb[5] }
+    }};
+
+    for (const auto& entry : colorEntries) {
+        QPixmap pix(14, 14);
+        pix.fill(QColor(entry.rgb));
+        auto* action = colorMenu->addAction(QIcon(pix), entry.name, [this, idx = entry.index] {
+            setTraceColorPreset(idx);
+        });
+        action->setCheckable(true);
+        action->setData(entry.index);
+        if (entry.index == 0) action->setChecked(true);
+        traceColorActionGroup_->addAction(action);
+    }
+    colorMenu->addSeparator();
+    customTraceColorAction_ = colorMenu->addAction(tr("自定义曲线颜色 (&U)..."), this, &MainWindow::chooseCustomTraceColor);
+    customTraceColorAction_->setCheckable(true);
+    customTraceColorAction_->setData(6);
+    traceColorActionGroup_->addAction(customTraceColorAction_);
+
+    // 2.4 曲线线宽 (Trace Line Width)
+    auto* widthMenu = displayMenu->addMenu(tr("曲线线宽 (&W)"));
+    lineWidthActionGroup_ = new QActionGroup(this);
+    const QString widthLabels[4] = {
+        tr("1 px（精细）"),
+        tr("2 px（标准）"),
+        tr("3 px（加粗）"),
+        tr("4 px（高亮）")
+    };
+    for (int w = 1; w <= 4; ++w) {
+        auto* action = widthMenu->addAction(widthLabels[w - 1], [this, w] {
+            setTraceLineWidth(w);
+        });
+        action->setCheckable(true);
+        action->setData(w);
+        if (w == 1) action->setChecked(true);
+        lineWidthActionGroup_->addAction(action);
+    }
+
+    // 2.5 显示网格 (Grid)
+    gridAction_ = displayMenu->addAction(tr("显示网格 (&G)"), [this](bool checked) {
+        setGridVisible(checked);
+    });
+    gridAction_->setCheckable(true);
+    gridAction_->setChecked(true);
+    gridAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+
+    displayMenu->addSeparator();
+
+    // 2.6 瀑布图色图 (Waterfall Colormap)
+    auto* colormapMenu = displayMenu->addMenu(tr("瀑布图色图 (&M)"));
+    colormapActionGroup_ = new QActionGroup(this);
+    const struct ColormapEntry {
+        QString name;
+        int mapIndex;
+    } colormapEntries[] = {
+        { tr("工业标准彩虹 (Classic Rainbow)"), static_cast<int>(ColormapPreset::ClassicRainbow) },
+        { tr("高对比深海 (Rohde & Schwarz)"), static_cast<int>(ColormapPreset::RohdeSchwarz) },
+        { tr("铁红热力 (Ironbow)"), static_cast<int>(ColormapPreset::Ironbow) },
+        { tr("深海冰蓝 (Deep Ocean)"), static_cast<int>(ColormapPreset::DeepOcean) },
+        { tr("单通道灰度 (Grayscale)"), static_cast<int>(ColormapPreset::Grayscale) }
+    };
+    for (const auto& entry : colormapEntries) {
+        auto* action = colormapMenu->addAction(entry.name, [this, idx = entry.mapIndex] {
+            setWaterfallColormap(idx);
+        });
+        action->setCheckable(true);
+        action->setData(entry.mapIndex);
+        if (entry.mapIndex == 0) action->setChecked(true);
+        colormapActionGroup_->addAction(action);
+    }
+
+    displayMenu->addSeparator();
+
+    // 2.7 自动量程与全屏
+    displayMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
+    displayMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
 
     // 3. Help Menu
     auto* helpMenu = bar->addMenu(tr("帮助 (&H)"));
@@ -1140,7 +1437,7 @@ QWidget* MainWindow::buildSourceGroup()
 
 QWidget* MainWindow::buildDisplayGroup()
 {
-    auto* group = new QGroupBox(tr("幅度显示"), this);
+    auto* group = new QGroupBox(tr("幅度与刻度"), this);
     auto* form = new QFormLayout(group);
 
     referenceLevelSpin_ = new QDoubleSpinBox(group);
@@ -1162,36 +1459,14 @@ QWidget* MainWindow::buildDisplayGroup()
     verticalScaleSpin_->setValue(14.0);
     verticalScaleSpin_->setSuffix(tr(" dB/格"));
 
-    plotColorCombo_ = new QComboBox(group);
-    plotColorCombo_->setObjectName(QStringLiteral("plotColorPreset"));
-    plotColorCombo_->addItem(tr("翠绿"), QColor(0, 235, 180));
-    plotColorCombo_->addItem(tr("青蓝"), QColor(0, 166, 255));
-    plotColorCombo_->addItem(tr("明黄"), QColor(255, 205, 55));
-    plotColorCombo_->addItem(tr("白色"), QColor(235, 240, 245));
-    plotLineWidthSpin_ = new QSpinBox(group);
-    plotLineWidthSpin_->setObjectName(QStringLiteral("plotLineWidth"));
-    plotLineWidthSpin_->setRange(1, 4);
-    plotLineWidthSpin_->setValue(1);
-    plotLineWidthSpin_->setSuffix(tr(" px"));
-    plotGridCheck_ = new QCheckBox(tr("显示网格"), group);
-    plotGridCheck_->setObjectName(QStringLiteral("plotGridVisible"));
-    plotGridCheck_->setChecked(true);
-    plotThemeCombo_ = new QComboBox(group);
-    plotThemeCombo_->setObjectName(QStringLiteral("plotTheme"));
-    plotThemeCombo_->addItem(tr("深色"), 0);
-    plotThemeCombo_->addItem(tr("浅色"), 1);
-
-    fullScreenButton_ = new QPushButton(tr("进入全屏"), group);
+    autoRangeButton_ = new QPushButton(tr("自动量程 (Ctrl+R)"), group);
+    autoRangeButton_->setObjectName(QStringLiteral("autoRangeButton"));
+    fullScreenButton_ = new QPushButton(tr("进入全屏 (F11)"), group);
     fullScreenButton_->setObjectName(QStringLiteral("fullScreenButton"));
-    autoRangeButton_ = new QPushButton(tr("自动量程"), group);
 
     form->addRow(tr("参考电平"), referenceLevelSpin_);
     form->addRow(tr("底部电平"), bottomLevelSpin_);
     form->addRow(tr("垂直刻度"), verticalScaleSpin_);
-    form->addRow(tr("曲线颜色"), plotColorCombo_);
-    form->addRow(tr("曲线线宽"), plotLineWidthSpin_);
-    form->addRow(tr("网格"), plotGridCheck_);
-    form->addRow(tr("绘图区主题"), plotThemeCombo_);
     form->addRow(autoRangeButton_);
     form->addRow(fullScreenButton_);
     return group;
@@ -1632,14 +1907,6 @@ void MainWindow::connectUi()
             this, &MainWindow::applyAmplitudeScale);
     connect(verticalScaleSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyVerticalScale);
-    connect(plotColorCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, &MainWindow::applyPlotAppearance);
-    connect(plotLineWidthSpin_, qOverload<int>(&QSpinBox::valueChanged),
-            this, &MainWindow::applyPlotAppearance);
-    connect(plotGridCheck_, &QCheckBox::toggled,
-            this, &MainWindow::applyPlotAppearance);
-    connect(plotThemeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, &MainWindow::applyPlotAppearance);
 
     connect(source_.get(), &ISpectrumSource::stateChanged,
             this, &MainWindow::handleSourceState);
@@ -1663,10 +1930,12 @@ void MainWindow::connectUi()
     connect(plot_, &SpectrumPlotWidget::framePainted,
             this, &MainWindow::recordPaintedFrameLatency);
 
-    connect(displayViewModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, &MainWindow::applyDisplayViewMode);
-    connect(waterfallColormapCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, &MainWindow::applyWaterfallSettings);
+    connect(displayViewModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](const int index) {
+        setDisplayViewMode(displayViewModeCombo_->itemData(index).toInt());
+    });
+    connect(waterfallColormapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](const int index) {
+        setWaterfallColormap(waterfallColormapCombo_->itemData(index).toInt());
+    });
     connect(waterfallHistorySpin_, qOverload<int>(&QSpinBox::valueChanged),
             this, &MainWindow::applyWaterfallSettings);
     connect(waterfallClearButton_, &QPushButton::clicked,
@@ -1737,12 +2006,27 @@ void MainWindow::loadSettings()
     }
     referenceLevelSpin_->setValue(settings.referenceLevelDbfs);
     bottomLevelSpin_->setValue(settings.bottomLevelDbfs);
-    plotColorCombo_->setCurrentIndex(settings.plotColorPreset);
-    plotLineWidthSpin_->setValue(settings.plotLineWidth);
-    plotGridCheck_->setChecked(settings.plotGridVisible);
-    const int themeIndex = plotThemeCombo_->findData(settings.plotTheme);
-    if (themeIndex >= 0) {
-        plotThemeCombo_->setCurrentIndex(themeIndex);
+    setTraceColorPreset(settings.plotColorPreset);
+    if (!settings.customTraceColorHex.isEmpty()) {
+        customTraceColor_ = QColor(settings.customTraceColorHex);
+        if (settings.plotColorPreset == 6 && customTraceColorAction_) {
+            QPixmap pix(14, 14);
+            pix.fill(customTraceColor_);
+            customTraceColorAction_->setIcon(QIcon(pix));
+            customTraceColorAction_->setChecked(true);
+        }
+    }
+    setTraceLineWidth(settings.plotLineWidth);
+    setGridVisible(settings.plotGridVisible);
+    setPlotTheme(settings.plotTheme);
+    if (!settings.customThemeColorHex.isEmpty()) {
+        customThemeColor_ = QColor(settings.customThemeColorHex);
+        if (settings.plotTheme == 4 && customThemeAction_) {
+            QPixmap pix(14, 14);
+            pix.fill(customThemeColor_);
+            customThemeAction_->setIcon(QIcon(pix));
+            customThemeAction_->setChecked(true);
+        }
     }
     averageCountSpin_->setValue(settings.averageCount);
 
@@ -1803,10 +2087,12 @@ void MainWindow::saveSettings() const
     }
     settings.referenceLevelDbfs = referenceLevelSpin_->value();
     settings.bottomLevelDbfs = bottomLevelSpin_->value();
-    settings.plotColorPreset = plotColorCombo_->currentIndex();
-    settings.plotLineWidth = plotLineWidthSpin_->value();
-    settings.plotGridVisible = plotGridCheck_->isChecked();
-    settings.plotTheme = plotThemeCombo_->currentData().toInt();
+    settings.plotColorPreset = plotColorPreset_;
+    settings.customTraceColorHex = customTraceColor_.name(QColor::HexRgb);
+    settings.plotLineWidth = plotLineWidth_;
+    settings.plotGridVisible = plotGridVisible_;
+    settings.plotTheme = plotTheme_;
+    settings.customThemeColorHex = customThemeColor_.name(QColor::HexRgb);
     settings.traceMode = traceModeCombo_->currentData().toInt();
     settings.averageCount = averageCountSpin_->value();
     settings.displayViewMode = displayViewModeCombo_->currentData().toInt();

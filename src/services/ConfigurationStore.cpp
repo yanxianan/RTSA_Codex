@@ -75,6 +75,19 @@ bool readBool(QSettings& storage,
     return false;
 }
 
+bool readString(QSettings& storage,
+                const QString& key,
+                const QString& fallback,
+                QString& destination)
+{
+    if (!storage.contains(key)) {
+        destination = fallback;
+        return true;
+    }
+    destination = storage.value(key).toString().trimmed();
+    return true;
+}
+
 QString statusMessage(const QSettings::Status status)
 {
     switch (status) {
@@ -135,9 +148,9 @@ bool AppSettings::isValid() const noexcept
         && std::isfinite(bottomLevelDbfs)
         && bottomLevelDbfs >= -200.0 && bottomLevelDbfs <= 40.0
         && bottomLevelDbfs < referenceLevelDbfs
-        && plotColorPreset >= 0 && plotColorPreset <= 3
+        && plotColorPreset >= 0 && plotColorPreset <= 6
         && plotLineWidth >= 1 && plotLineWidth <= 4
-        && plotTheme >= 0 && plotTheme <= 1
+        && plotTheme >= 0 && plotTheme <= 4
         && traceMode >= 0 && traceMode <= 3
         && averageCount >= 1 && averageCount <= 1024
         && displayViewMode >= 0 && displayViewMode <= 2
@@ -239,12 +252,16 @@ SettingsLoadResult ConfigurationStore::load(QSettings& storage)
                       defaults.bottomLevelDbfs, candidate.bottomLevelDbfs)
         && readInt(storage, QStringLiteral("plotColorPreset"),
                    defaults.plotColorPreset, candidate.plotColorPreset)
+        && readString(storage, QStringLiteral("customTraceColorHex"),
+                      defaults.customTraceColorHex, candidate.customTraceColorHex)
         && readInt(storage, QStringLiteral("plotLineWidth"),
                    defaults.plotLineWidth, candidate.plotLineWidth)
         && readBool(storage, QStringLiteral("plotGridVisible"),
                     defaults.plotGridVisible, candidate.plotGridVisible)
         && readInt(storage, QStringLiteral("plotTheme"),
                    defaults.plotTheme, candidate.plotTheme)
+        && readString(storage, QStringLiteral("customThemeColorHex"),
+                      defaults.customThemeColorHex, candidate.customThemeColorHex)
         && readInt(storage, QStringLiteral("traceMode"),
                    defaults.traceMode, candidate.traceMode)
         && readInt(storage, QStringLiteral("averageCount"),
@@ -316,9 +333,11 @@ SettingsSaveResult ConfigurationStore::save(QSettings& storage,
     storage.setValue(QStringLiteral("referenceLevelDbfs"), settings.referenceLevelDbfs);
     storage.setValue(QStringLiteral("bottomLevelDbfs"), settings.bottomLevelDbfs);
     storage.setValue(QStringLiteral("plotColorPreset"), settings.plotColorPreset);
+    storage.setValue(QStringLiteral("customTraceColorHex"), settings.customTraceColorHex);
     storage.setValue(QStringLiteral("plotLineWidth"), settings.plotLineWidth);
     storage.setValue(QStringLiteral("plotGridVisible"), settings.plotGridVisible);
     storage.setValue(QStringLiteral("plotTheme"), settings.plotTheme);
+    storage.setValue(QStringLiteral("customThemeColorHex"), settings.customThemeColorHex);
     storage.setValue(QStringLiteral("traceMode"), settings.traceMode);
     storage.setValue(QStringLiteral("averageCount"), settings.averageCount);
     storage.setValue(QStringLiteral("displayViewMode"), settings.displayViewMode);

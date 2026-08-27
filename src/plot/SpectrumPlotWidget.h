@@ -39,6 +39,9 @@ public:
     ConstSpectrumFramePtr frame() const noexcept;
     void setAmplitudeScale(float referenceLevel, float bottomLevel);
     void setAppearance(const QColor& traceColor, int traceWidth,
+                       bool gridVisible, int themeIndex,
+                       const QColor& customBgColor = QColor());
+    void setAppearance(const QColor& traceColor, int traceWidth,
                        bool gridVisible, bool lightTheme);
     void setActiveMarker(std::size_t markerIndex);
     std::size_t activeMarker() const noexcept;

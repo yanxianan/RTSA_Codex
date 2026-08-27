@@ -81,9 +81,19 @@ void SpectrumPlotWidget::setAmplitudeScale(const float referenceLevel, const flo
 void SpectrumPlotWidget::setAppearance(const QColor& traceColor,
                                        const int traceWidth,
                                        const bool gridVisible,
+                                       const int themeIndex,
+                                       const QColor& customBgColor)
+{
+    renderer_.setAppearance(traceColor, traceWidth, gridVisible, themeIndex, customBgColor);
+    update();
+}
+
+void SpectrumPlotWidget::setAppearance(const QColor& traceColor,
+                                       const int traceWidth,
+                                       const bool gridVisible,
                                        const bool lightTheme)
 {
-    renderer_.setAppearance(traceColor, traceWidth, gridVisible, lightTheme);
+    renderer_.setAppearance(traceColor, traceWidth, gridVisible, lightTheme ? 1 : 0);
     update();
 }
 

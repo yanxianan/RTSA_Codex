@@ -4,6 +4,7 @@
 #include "sources/ISimulationConfigurable.h"
 #include "sources/ISpectrumSource.h"
 
+#include <QColor>
 #include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QMainWindow>
@@ -12,6 +13,8 @@
 #include <array>
 #include <memory>
 
+class QAction;
+class QActionGroup;
 class QComboBox;
 class QCheckBox;
 class QCloseEvent;
@@ -48,6 +51,24 @@ public slots:
     void stopAcquisition();
     void singleAcquisition();
     void toggleFullScreen();
+    void autoRangeAmplitude();
+    void resetFrequencyRange();
+    void saveScreenshot();
+    void saveSimulationScenario();
+    void exportCsv();
+    void handleExportFinished();
+    void showAboutDialog();
+    void showShortcutsDialog();
+    void showUserGuideDialog();
+    void showTelemetryDialog();
+    void setPlotTheme(int themeIndex);
+    void chooseCustomThemeColor();
+    void setTraceColorPreset(int presetIndex);
+    void chooseCustomTraceColor();
+    void setTraceLineWidth(int width);
+    void setGridVisible(bool visible);
+    void setDisplayViewMode(int mode);
+    void setWaterfallColormap(int colormap);
 
 private slots:
     void refreshDisplay();
@@ -61,7 +82,6 @@ private slots:
     void applyPlotAppearance();
     void applyDisplayViewMode();
     void applyWaterfallSettings();
-    void autoRangeAmplitude();
     void measureRangePeak();
     void measureChannelPower();
     void handleSourceState(int stateValue);
@@ -72,15 +92,6 @@ private slots:
     void handleFrequencyRangeSelected(double startFrequencyHz, double stopFrequencyHz);
     void recordPaintedFrameLatency(std::uint64_t publicationSequence,
                                    std::uint64_t timestampNs);
-    void resetFrequencyRange();
-    void saveScreenshot();
-    void saveSimulationScenario();
-    void exportCsv();
-    void handleExportFinished();
-    void showAboutDialog();
-    void showShortcutsDialog();
-    void showUserGuideDialog();
-    void showTelemetryDialog();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -155,16 +166,28 @@ private:
     QSpinBox* waterfallHistorySpin_ = nullptr;
     QPushButton* waterfallClearButton_ = nullptr;
     QComboBox* traceModeCombo_ = nullptr;
-    QComboBox* plotColorCombo_ = nullptr;
-    QComboBox* plotThemeCombo_ = nullptr;
     QComboBox* activeMarkerCombo_ = nullptr;
     QSpinBox* averageCountSpin_ = nullptr;
-    QSpinBox* plotLineWidthSpin_ = nullptr;
     QDoubleSpinBox* peakThresholdSpin_ = nullptr;
     FrequencySpinBox* measurementStartSpin_ = nullptr;
     FrequencySpinBox* measurementStopSpin_ = nullptr;
     QCheckBox* deltaMarkerCheck_ = nullptr;
-    QCheckBox* plotGridCheck_ = nullptr;
+
+    int plotColorPreset_ = 0;
+    QColor customTraceColor_ { 0, 235, 180 };
+    int plotLineWidth_ = 1;
+    bool plotGridVisible_ = true;
+    int plotTheme_ = 0;
+    QColor customThemeColor_ { 4, 9, 14 };
+
+    QActionGroup* viewModeActionGroup_ = nullptr;
+    QActionGroup* themeActionGroup_ = nullptr;
+    QActionGroup* traceColorActionGroup_ = nullptr;
+    QActionGroup* lineWidthActionGroup_ = nullptr;
+    QAction* gridAction_ = nullptr;
+    QActionGroup* colormapActionGroup_ = nullptr;
+    QAction* customThemeAction_ = nullptr;
+    QAction* customTraceColorAction_ = nullptr;
     QPushButton* startButton_ = nullptr;
     QPushButton* pauseButton_ = nullptr;
     QPushButton* stopButton_ = nullptr;

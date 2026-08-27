@@ -38,9 +38,11 @@ struct AppSettings {
     double referenceLevelDbfs = 0.0;
     double bottomLevelDbfs = -140.0;
     int plotColorPreset = 0;
+    QString customTraceColorHex = QStringLiteral("#00ebb4");
     int plotLineWidth = 1;
     bool plotGridVisible = true;
     int plotTheme = 0;
+    QString customThemeColorHex = QStringLiteral("#04090e");
     int traceMode = 0;
     int averageCount = 16;
     int displayViewMode = 2; // 0: Spectrum, 1: Waterfall, 2: Split (Spectrum + Waterfall)

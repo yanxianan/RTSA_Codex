@@ -27,6 +27,9 @@ public:
     void setViewport(const QSize& widgetSize, const QRect& plotRect);
     void setAmplitudeScale(float referenceLevel, float bottomLevel);
     void setAppearance(const QColor& traceColor, int traceWidth,
+                       bool gridVisible, int themeIndex,
+                       const QColor& customBgColor = QColor());
+    void setAppearance(const QColor& traceColor, int traceWidth,
                        bool gridVisible, bool lightTheme);
     void setFrame(ConstSpectrumFramePtr frame);
     void setMarkerBins(
@@ -56,7 +59,8 @@ private:
     QColor traceColor_ { 0, 235, 180 };
     int traceWidth_ = 1;
     bool gridVisible_ = true;
-    bool lightTheme_ = false;
+    int themeIndex_ = 0;
+    QColor customBgColor_;
     ConstSpectrumFramePtr frame_;
     std::uint64_t geometrySequence_ = 0;
     std::vector<EnvelopeColumn> envelope_;
