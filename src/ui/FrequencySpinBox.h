@@ -2,6 +2,7 @@
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QRegularExpression>
 #include <QWidget>
@@ -44,6 +45,9 @@ public:
     static double defaultStep(Unit unit) noexcept;
     static Unit bestUnitForFrequency(double hz) noexcept;
     static QString unitString(Unit unit);
+
+protected:
+    void changeEvent(QEvent* event) override;
 
 signals:
     void frequencyChanged(double hz);

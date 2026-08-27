@@ -75,6 +75,7 @@ private slots:
     void frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz();
     void displayMenuProvidesThemesTraceColorsLineWidthAndGrid();
     void displayAppearanceCustomizationsApplyToSpectrumPlot();
+    void enablingM2WithoutM1DoesNotHang();
 };
 
 namespace {
@@ -740,6 +741,61 @@ void MainWindowTests::displayAppearanceCustomizationsApplyToSpectrumPlot()
     QVERIFY(plot->isHidden());
     window.setDisplayViewMode(2); // Dual View
     QVERIFY(!plot->isHidden());
+}
+
+void MainWindowTests::enablingM2WithoutM1DoesNotHang()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    window.show();
+    auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
+    auto* active = window.findChild<QComboBox*>(QStringLiteral("activeMarker"));
+    auto* markerEnabled = window.findChild<QCheckBox*>(QStringLiteral("markerEnabled"));
+    auto* markerFreq = window.findChild<FrequencySpinBox*>(QStringLiteral("markerFrequencyMHz"));
+    auto* peakButton = window.findChild<QPushButton*>(QStringLiteral("peakButton"));
+    auto* markerTable = window.findChild<QTableWidget*>(QStringLiteral("markerTable"));
+    auto* deltaLabel = window.findChild<QLabel*>(QStringLiteral("activeMarkerDeltaLabel"));
+
+    QVERIFY(plot && active && markerEnabled && markerFreq && peakButton && markerTable && deltaLabel);
+
+    // 1. Start acquisition
+    window.startAcquisition();
+    QTRY_VERIFY_WITH_TIMEOUT(plot->frame() != nullptr, 1000);
+
+    // 2. M1 is disabled initially
+    QVERIFY(!plot->isMarkerEnabled(0));
+
+    // 3. Switch active marker to M2 (index 1) directly via combo
+    active->setCurrentIndex(1);
+    QCOMPARE(plot->activeMarker(), 1U);
+    QVERIFY(!markerEnabled->isChecked());
+
+    // 4. Enable M2 while M1 is still NOT enabled
+    markerEnabled->setChecked(true);
+    QVERIFY(plot->isMarkerEnabled(1));
+    QVERIFY(!plot->isMarkerEnabled(0));
+
+    // 5. Let acquisition and render loop run for several frames
+    QTest::qWait(200);
+
+    // 6. Peak search with M2
+    peakButton->click();
+    QTest::qWait(100);
+    QVERIFY(plot->isMarkerEnabled(1));
+    QVERIFY(!plot->isMarkerEnabled(0));
+
+    // 7. Click on marker table row 0 (switch back to M1)
+    markerTable->cellClicked(0, 0);
+    QCOMPARE(plot->activeMarker(), 0U);
+    QVERIFY(!markerEnabled->isChecked()); // M1 is still disabled
+    QTest::qWait(100);
+
+    // 8. Click on marker table row 1 (switch back to M2)
+    markerTable->cellClicked(1, 0);
+    QCOMPARE(plot->activeMarker(), 1U);
+    QVERIFY(markerEnabled->isChecked()); // M2 is enabled
+    QTest::qWait(200);
+
+    window.stopAcquisition();
 }
 
 } // namespace rtsa

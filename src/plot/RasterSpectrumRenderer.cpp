@@ -153,7 +153,9 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
                 : 0.0;
             const int x = plotRect_.left() + static_cast<int>(std::lround(
                 ratio * static_cast<double>(plotRect_.width() - 1)));
-            const int y = std::clamp(yForAmplitude(frame_->bins[bin]), minY, maxY);
+            const float rawAmp = frame_->bins[bin];
+            const float safeAmp = std::isfinite(rawAmp) ? rawAmp : bottomLevel_;
+            const int y = std::clamp(yForAmplitude(safeAmp), minY, maxY);
             const bool active = markerIndex == activeMarkerIndex_;
             const QColor markerColor = colors[markerIndex];
 
@@ -395,8 +397,9 @@ void RasterSpectrumRenderer::rebuildGeometry()
 
 int RasterSpectrumRenderer::yForAmplitude(const float amplitude) const noexcept
 {
+    const float safeAmp = std::isfinite(amplitude) ? amplitude : bottomLevel_;
     const float range = std::max(1.0F, referenceLevel_ - bottomLevel_);
-    const float normalized = std::clamp((referenceLevel_ - amplitude) / range, 0.0F, 1.0F);
+    const float normalized = std::clamp((referenceLevel_ - safeAmp) / range, 0.0F, 1.0F);
     return plotRect_.top()
         + static_cast<int>(std::lround(normalized * static_cast<float>(plotRect_.height())));
 }

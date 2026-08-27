@@ -57,6 +57,16 @@ QWidget* FrequencySpinBox::createCompoundWidget(QWidget* parent)
     return containerWidget_;
 }
 
+void FrequencySpinBox::changeEvent(QEvent* event)
+{
+    QDoubleSpinBox::changeEvent(event);
+    if (event && event->type() == QEvent::EnabledChange) {
+        if (unitCombo_) {
+            unitCombo_->setEnabled(isEnabled());
+        }
+    }
+}
+
 double FrequencySpinBox::unitMultiplier(const Unit unit) noexcept
 {
     switch (unit) {

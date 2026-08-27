@@ -246,6 +246,7 @@ private:
     std::size_t displayLatencyCount_ = 0;
     std::size_t displayLatencyWriteIndex_ = 0;
     QElapsedTimer displayRateTimer_;
+    QElapsedTimer markerUpdateTimer_;
     QString lastSourceError_;
     QString lastSourceErrorTime_;
 };

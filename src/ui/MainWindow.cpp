@@ -793,7 +793,7 @@ void MainWindow::refreshMarkerLabels()
                 .arg(d.amplitudeDelta, 0, 'f', 2)
                 .arg(unit);
         } else if (isActEnabled && !plot_->isMarkerEnabled(0U)) {
-            deltaTargetText = tr("提示: 请同时启用 M1 作为基准参考");
+            deltaTargetText = tr("Δ(M%1): 未设基准 (需启用M1)").arg(active + 1U);
         } else {
             deltaTargetText = tr("Δ 差分: ---");
         }
@@ -809,7 +809,7 @@ void MainWindow::refreshMarkerLabels()
         }
     };
     auto updateItemBg = [](QTableWidgetItem* item, const QColor& color) {
-        if (item && item->background().color() != color) {
+        if (item && item->background() != QBrush(color)) {
             item->setBackground(color);
         }
     };
@@ -1858,7 +1858,7 @@ QWidget* MainWindow::buildMarkerTableGroup()
 
     markerLabel_ = new QLabel(tr("M1 未启用"), activeCard);
     markerLabel_->setObjectName(QStringLiteral("markerLabel"));
-    markerLabel_->setWordWrap(true);
+    markerLabel_->setWordWrap(false);
     QFont monoFont(QStringLiteral("Consolas, Courier New, monospace"));
     monoFont.setPointSize(10);
     monoFont.setBold(true);
@@ -1867,7 +1867,7 @@ QWidget* MainWindow::buildMarkerTableGroup()
 
     activeMarkerDeltaLabel_ = new QLabel(tr("Δ 差分: ---"), activeCard);
     activeMarkerDeltaLabel_->setObjectName(QStringLiteral("activeMarkerDeltaLabel"));
-    activeMarkerDeltaLabel_->setWordWrap(true);
+    activeMarkerDeltaLabel_->setWordWrap(false);
     QFont deltaFont(QStringLiteral("Consolas, Courier New, monospace"));
     deltaFont.setPointSize(9);
     activeMarkerDeltaLabel_->setFont(deltaFont);
@@ -1887,11 +1887,13 @@ QWidget* MainWindow::buildMarkerTableGroup()
     markerTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     markerTable_->setShowGrid(true);
     markerTable_->horizontalHeader()->setStretchLastSection(true);
-    markerTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    markerTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    markerTable_->setColumnWidth(0, 52);
     markerTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    markerTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    markerTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    markerTable_->setColumnWidth(2, 78);
     markerTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    markerTable_->setFixedHeight(130);
+    markerTable_->setFixedHeight(126);
 
     const QStringList markerNames = { QStringLiteral("● M1"), QStringLiteral("● M2"), QStringLiteral("● M3"), QStringLiteral("● M4") };
     const QColor markerColors[] = { QColor(255, 213, 79), QColor(0, 229, 255), QColor(255, 64, 129), QColor(0, 230, 118) };
