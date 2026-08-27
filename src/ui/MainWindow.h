@@ -27,6 +27,7 @@ class QPushButton;
 class QSpinBox;
 class QSplitter;
 class QTabWidget;
+class QTableWidget;
 class QTimer;
 
 namespace rtsa {
@@ -82,8 +83,9 @@ private slots:
     void applyPlotAppearance();
     void applyDisplayViewMode();
     void applyWaterfallSettings();
-    void measureRangePeak();
-    void measureChannelPower();
+    void markerToCenter();
+    void applyMarkerFrequencyFromUi();
+    void handleMarkerEnableToggled(bool enabled);
     void handleSourceState(int stateValue);
     void handleMarkerChanged(double frequencyHz, float amplitude,
                              const QString& unitText, bool calibrated);
@@ -108,7 +110,7 @@ private:
     QWidget* buildSimulationGroup();
     QWidget* buildTraceGroup();
     QWidget* buildMarkerGroup();
-    QWidget* buildMeasurementGroup();
+    QWidget* buildMarkerTableGroup();
     QWidget* buildFileGroup();
     QWidget* buildTelemetryGroup();
     void connectUi();
@@ -167,11 +169,10 @@ private:
     QPushButton* waterfallClearButton_ = nullptr;
     QComboBox* traceModeCombo_ = nullptr;
     QComboBox* activeMarkerCombo_ = nullptr;
+    QCheckBox* markerEnabledCheck_ = nullptr;
+    FrequencySpinBox* markerFrequencySpin_ = nullptr;
     QSpinBox* averageCountSpin_ = nullptr;
     QDoubleSpinBox* peakThresholdSpin_ = nullptr;
-    FrequencySpinBox* measurementStartSpin_ = nullptr;
-    FrequencySpinBox* measurementStopSpin_ = nullptr;
-    QCheckBox* deltaMarkerCheck_ = nullptr;
 
     int plotColorPreset_ = 0;
     QColor customTraceColor_ { 0, 235, 180 };
@@ -197,17 +198,16 @@ private:
     QPushButton* peakButton_ = nullptr;
     QPushButton* nextPeakButton_ = nullptr;
     QPushButton* previousPeakButton_ = nullptr;
+    QPushButton* markerToCenterButton_ = nullptr;
     QPushButton* clearMarkerButton_ = nullptr;
     QPushButton* clearAllMarkersButton_ = nullptr;
-    QPushButton* rangePeakButton_ = nullptr;
-    QPushButton* channelPowerButton_ = nullptr;
     QPushButton* resetTraceButton_ = nullptr;
     QPushButton* screenshotButton_ = nullptr;
     QPushButton* exportCsvButton_ = nullptr;
     QPushButton* saveScenarioButton_ = nullptr;
     QLabel* markerLabel_ = nullptr;
-    QLabel* deltaMarkerLabel_ = nullptr;
-    QLabel* measurementResultLabel_ = nullptr;
+    QLabel* activeMarkerDeltaLabel_ = nullptr;
+    QTableWidget* markerTable_ = nullptr;
     QLabel* sourceStateLabel_ = nullptr;
     QLabel* inputRateLabel_ = nullptr;
     QLabel* displayRateLabel_ = nullptr;

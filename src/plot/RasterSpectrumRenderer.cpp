@@ -132,10 +132,13 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
 
     if (frame_ && !frame_->bins.empty()) {
         const std::array<QColor, kSpectrumMarkerCount> colors {
-            QColor(255, 210, 55), QColor(64, 210, 255),
-            QColor(255, 115, 145), QColor(175, 235, 95)
+            QColor(255, 213, 79),  // M1: 琥珀金黄 (Amber Yellow)
+            QColor(0, 229, 255),   // M2: 科技青蓝 (Electric Cyan)
+            QColor(255, 64, 129),  // M3: 荧光洋红 (Neon Magenta)
+            QColor(0, 230, 118)    // M4: 明亮翠绿 (Bright Green)
         };
-        const QFontMetrics metrics(painter.font());
+        const QFont originalFont = painter.font();
+
         for (std::size_t markerIndex = 0; markerIndex < markerBins_.size(); ++markerIndex) {
             if (!markerBins_[markerIndex]) {
                 continue;
@@ -147,36 +150,54 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
                 : 0.0;
             const int x = plotRect_.left() + static_cast<int>(std::lround(
                 ratio * static_cast<double>(plotRect_.width() - 1)));
-            const int y = yForAmplitude(frame_->bins[bin]);
+            const int y = std::clamp(yForAmplitude(frame_->bins[bin]),
+                                     plotRect_.top(),
+                                     plotRect_.bottom());
             const bool active = markerIndex == activeMarkerIndex_;
-            painter.setPen(QPen(colors[markerIndex], active ? 2 : 1, Qt::DashLine));
-            painter.drawLine(x, plotRect_.top(), x, plotRect_.bottom());
+            const QColor markerColor = colors[markerIndex];
+
+            // 1. 工业级微弱垂直虚线标尺 (仅从采样点向下落到X轴，不横跨整个屏幕，不遮挡其他信号)
             if (active) {
-                painter.drawLine(plotRect_.left(), y, plotRect_.right(), y);
+                QPen guidePen(QColor(markerColor.red(), markerColor.green(), markerColor.blue(), 100), 1, Qt::DotLine);
+                painter.setPen(guidePen);
+                painter.drawLine(x, y, x, plotRect_.bottom());
             }
 
-            const QString label = QStringLiteral("M%1  %2  %3 %4")
-                .arg(markerIndex + 1U)
-                .arg(formatFrequency(
-                    FrequencyMapper::frequencyForBin(frame_->metadata, bin)))
-                .arg(frame_->bins[bin], 0, 'f', 1)
-                .arg(amplitudeUnitText());
-            const QSize labelSize = metrics.size(Qt::TextSingleLine, label) + QSize(12, 6);
-            int labelX = x + 6;
-            if (labelX + labelSize.width() > plotRect_.right()) {
-                labelX = x - labelSize.width() - 6;
+            // 2. 曲线峰值倒三角标 (Inverted Triangle Badge ▼) 精准锚定在 (x, y)
+            constexpr int kTriHalfWidth = 5;
+            constexpr int kTriHeight = 8;
+            QPolygonF triangle;
+            triangle << QPointF(x, y)
+                     << QPointF(x - kTriHalfWidth, y - kTriHeight)
+                     << QPointF(x + kTriHalfWidth, y - kTriHeight);
+
+            painter.setBrush(active ? markerColor : QColor(markerColor.red(), markerColor.green(), markerColor.blue(), 140));
+            painter.setPen(QPen(active ? Qt::white : markerColor.darker(130), 1.0));
+            painter.drawPolygon(triangle);
+
+            // 3. 紧凑型编号标签 (例如 M1 / M2)，位于倒三角上方
+            const QString tag = QStringLiteral("M%1").arg(markerIndex + 1U);
+            QFont tagFont = originalFont;
+            tagFont.setPixelSize(9);
+            tagFont.setBold(active);
+            painter.setFont(tagFont);
+
+            const int tagW = 20;
+            const int tagH = 12;
+            int tagY = y - kTriHeight - tagH - 1;
+            if (tagY < plotRect_.top() + 2) {
+                tagY = y + 4; // 若靠近绘图区顶部则放置在顶点下方
             }
-            int labelY = y - labelSize.height() - 6
-                + static_cast<int>(markerIndex) * (labelSize.height() + 2);
-            labelY = std::clamp(labelY,
-                                plotRect_.top(),
-                                plotRect_.bottom() - labelSize.height());
-            const QRect labelRect(QPoint(labelX, labelY), labelSize);
-            painter.fillRect(labelRect, QColor(20, 25, 30, active ? 240 : 210));
-            painter.setPen(colors[markerIndex].lighter(active ? 115 : 100));
-            painter.drawText(labelRect.adjusted(6, 3, -6, -3),
-                             Qt::AlignLeft | Qt::AlignVCenter, label);
+            const int tagX = std::clamp(x - tagW / 2, plotRect_.left() + 2, plotRect_.right() - tagW - 2);
+            const QRect tagRect(tagX, tagY, tagW, tagH);
+
+            painter.fillRect(tagRect, QColor(10, 15, 22, active ? 230 : 180));
+            painter.setPen(QPen(active ? markerColor : markerColor.darker(110), 1));
+            painter.drawRect(tagRect);
+            painter.setPen(active ? Qt::white : markerColor);
+            painter.drawText(tagRect, Qt::AlignCenter, tag);
         }
+        painter.setFont(originalFont);
     }
 
     painter.restore();

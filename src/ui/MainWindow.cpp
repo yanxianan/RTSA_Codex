@@ -28,6 +28,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QIcon>
 #include <QLabel>
 #include <QKeySequence>
@@ -44,6 +45,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -92,6 +94,21 @@ constexpr std::array<QRgb, 4> kClassicThemeRgb = {
     default:
         return QObject::tr("已停止");
     }
+}
+
+QString formatFrequency(const double frequencyHz)
+{
+    const double absolute = std::abs(frequencyHz);
+    if (absolute >= 1.0e9) {
+        return QStringLiteral("%1 GHz").arg(frequencyHz / 1.0e9, 0, 'f', 6);
+    }
+    if (absolute >= 1.0e6) {
+        return QStringLiteral("%1 MHz").arg(frequencyHz / 1.0e6, 0, 'f', 6);
+    }
+    if (absolute >= 1.0e3) {
+        return QStringLiteral("%1 kHz").arg(frequencyHz / 1.0e3, 0, 'f', 3);
+    }
+    return QStringLiteral("%1 Hz").arg(frequencyHz, 0, 'f', 1);
 }
 
 QString formatFrequencyDelta(const double frequencyHz)
@@ -627,48 +644,38 @@ void MainWindow::autoRangeAmplitude()
     applyAmplitudeScale();
 }
 
-void MainWindow::measureRangePeak()
+void MainWindow::markerToCenter()
 {
-    const auto frame = pipeline_.latest();
-    if (!frame) {
-        measurementResultLabel_->setText(tr("无有效频谱帧"));
+    if (!plot_ || !centerFrequencySpin_) {
         return;
     }
-    const RangePeakMeasurement result = SpectrumMeasurements::peakInRange(
-        *frame,
-        measurementStartSpin_->frequencyHz(),
-        measurementStopSpin_->frequencyHz());
-    if (!result.valid) {
-        measurementResultLabel_->setText(tr("区间无效或不含有效频点"));
+    const auto active = plot_->activeMarker();
+    const auto measurement = plot_->markerMeasurement(active);
+    if (!measurement.valid) {
         return;
     }
-    measurementResultLabel_->setText(tr("峰值 %1 MHz, %2 %3%4")
-        .arg(result.frequencyHz / 1.0e6, 0, 'f', 6)
-        .arg(result.amplitude, 0, 'f', 2)
-        .arg(QString::fromLatin1(amplitudeUnitSymbol(result.unit)))
-        .arg(result.calibrated ? tr("（已校准）") : tr("（未校准）")));
+    centerFrequencySpin_->setFrequencyHz(measurement.frequencyHz);
+    applySourceConfiguration();
 }
 
-void MainWindow::measureChannelPower()
+void MainWindow::handleMarkerEnableToggled(const bool enabled)
 {
-    const auto frame = pipeline_.latest();
-    if (!frame) {
-        measurementResultLabel_->setText(tr("无有效频谱帧"));
+    if (!plot_) {
         return;
     }
-    const ChannelPowerMeasurement result = SpectrumMeasurements::channelPowerInRange(
-        *frame,
-        measurementStartSpin_->frequencyHz(),
-        measurementStopSpin_->frequencyHz());
-    if (!result.valid) {
-        measurementResultLabel_->setText(tr("区间无效或功率数据不可积分"));
+    const auto active = plot_->activeMarker();
+    plot_->setMarkerEnabled(active, enabled);
+    refreshMarkerLabels();
+}
+
+void MainWindow::applyMarkerFrequencyFromUi()
+{
+    if (!plot_ || !markerFrequencySpin_) {
         return;
     }
-    measurementResultLabel_->setText(tr("信道功率 %1 %2，%3 点%4")
-        .arg(result.value, 0, 'f', 2)
-        .arg(QString::fromLatin1(amplitudeUnitSymbol(result.unit)))
-        .arg(result.integratedBins)
-        .arg(result.calibrated ? tr("（已校准）") : tr("（未校准）")));
+    const auto active = plot_->activeMarker();
+    plot_->setMarkerFrequency(active, markerFrequencySpin_->frequencyHz());
+    refreshMarkerLabels();
 }
 
 void MainWindow::synchronizeStartStopFromCenterSpan()
@@ -679,12 +686,6 @@ void MainWindow::synchronizeStartStopFromCenterSpan()
     const QSignalBlocker stopBlocker(stopFrequencySpin_);
     startFrequencySpin_->setFrequencyHz(centerHz - halfSpanHz, false);
     stopFrequencySpin_->setFrequencyHz(centerHz + halfSpanHz, false);
-    if (measurementStartSpin_ && measurementStopSpin_) {
-        const QSignalBlocker measurementStartBlocker(measurementStartSpin_);
-        const QSignalBlocker measurementStopBlocker(measurementStopSpin_);
-        measurementStartSpin_->setFrequencyHz(centerHz - halfSpanHz, false);
-        measurementStopSpin_->setFrequencyHz(centerHz + halfSpanHz, false);
-    }
 }
 
 void MainWindow::handleSourceState(const int stateValue)
@@ -702,42 +703,131 @@ void MainWindow::handleMarkerChanged(const double,
 
 void MainWindow::refreshMarkerLabels()
 {
-    if (!plot_ || !markerLabel_ || !deltaMarkerLabel_) {
+    if (!plot_ || !markerLabel_ || !activeMarkerDeltaLabel_ || !markerTable_) {
         return;
     }
     const std::size_t active = plot_->activeMarker();
-    const MarkerMeasurement marker = plot_->markerMeasurement(active);
     const auto frame = plot_->frame();
     const QString unit = frame
         ? QString::fromLatin1(amplitudeUnitSymbol(frame->metadata.unit))
         : QStringLiteral("dBFS");
-    if (marker.valid) {
-        markerLabel_->setText(tr("M%1  %2 MHz, %3 %4%5")
-            .arg(active + 1U)
-            .arg(marker.frequencyHz / 1.0e6, 0, 'f', 6)
-            .arg(marker.amplitude, 0, 'f', 2)
-            .arg(unit)
-            .arg(frame && frame->metadata.calibrated ? QString() : tr("（未校准）")));
-    } else {
-        markerLabel_->setText(tr("M%1 未启用").arg(active + 1U));
+
+    const std::array<QColor, kSpectrumMarkerCount> markerColors {
+        QColor(255, 213, 79), QColor(0, 229, 255), QColor(255, 64, 129), QColor(0, 230, 118)
+    };
+
+    // 1. 同步活动标记的控件状态
+    const bool isActEnabled = plot_->isMarkerEnabled(active);
+    if (markerEnabledCheck_) {
+        const QSignalBlocker blocker(markerEnabledCheck_);
+        markerEnabledCheck_->setChecked(isActEnabled);
+        markerEnabledCheck_->setText(tr("启用 M%1").arg(active + 1U));
+    }
+    if (markerFrequencySpin_) {
+        markerFrequencySpin_->setEnabled(isActEnabled);
+        const auto freq = plot_->markerFrequency(active);
+        if (freq && !markerFrequencySpin_->hasFocus()) {
+            const QSignalBlocker blocker(markerFrequencySpin_);
+            markerFrequencySpin_->setFrequencyHz(*freq, false);
+        }
     }
 
-    if (!plot_->deltaMarkerEnabled()) {
-        deltaMarkerLabel_->setText(tr("Delta 已关闭"));
-        return;
+    // 2. 更新活动标记读数主卡片 (Active Marker Card)
+    const MarkerMeasurement activeMeasure = plot_->markerMeasurement(active);
+    if (activeMeasure.valid) {
+        markerLabel_->setText(tr("M%1:  %2  |  %3 %4%5")
+            .arg(active + 1U)
+            .arg(formatFrequency(activeMeasure.frequencyHz))
+            .arg(activeMeasure.amplitude, 0, 'f', 2)
+            .arg(unit)
+            .arg(frame && frame->metadata.calibrated ? QString() : tr("（未校准）")));
+        markerLabel_->setStyleSheet(QStringLiteral("color: %1; font-weight: bold;").arg(markerColors[active].name()));
+    } else {
+        markerLabel_->setText(tr("M%1 未启用 (点击启用或点击搜索峰值)").arg(active + 1U));
+        markerLabel_->setStyleSheet(QStringLiteral("color: #8899A6; font-weight: normal;"));
     }
-    const DeltaMarkerMeasurement delta = plot_->deltaMarkerMeasurement();
-    if (!delta.valid) {
-        deltaMarkerLabel_->setText(active == 0U
-            ? tr("请选择 M2～M4 作为活动标记")
-            : tr("需要同时设置 M1 和活动标记"));
-        return;
+
+    // 3. 自动计算活动标记的 Delta 差分值 (无需配置，默认自动计算)
+    if (active == 0U) {
+        bool hasOther = false;
+        for (std::size_t i = 1; i < kSpectrumMarkerCount; ++i) {
+            if (plot_->isMarkerEnabled(i)) {
+                const auto d = plot_->deltaMarkerMeasurement(i, 0U);
+                if (d.valid) {
+                    const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
+                    activeMarkerDeltaLabel_->setText(tr("M1 [基准] | 与 M%1 差: ΔF = %2, ΔA = %3%4 %5")
+                        .arg(i + 1U)
+                        .arg(formatFrequencyDelta(d.frequencyDeltaHz))
+                        .arg(signA)
+                        .arg(d.amplitudeDelta, 0, 'f', 2)
+                        .arg(unit));
+                    hasOther = true;
+                    break;
+                }
+            }
+        }
+        if (!hasOther) {
+            activeMarkerDeltaLabel_->setText(tr("M1 [基准参考] (启用多个标记自动计算 Δ)"));
+        }
+    } else {
+        const auto d = plot_->deltaMarkerMeasurement(active, 0U);
+        if (d.valid) {
+            const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
+            activeMarkerDeltaLabel_->setText(tr("Δ(M%1 - M1):  %2  |  %3%4 %5")
+                .arg(active + 1U)
+                .arg(formatFrequencyDelta(d.frequencyDeltaHz))
+                .arg(signA)
+                .arg(d.amplitudeDelta, 0, 'f', 2)
+                .arg(unit));
+        } else if (isActEnabled && !plot_->isMarkerEnabled(0U)) {
+            activeMarkerDeltaLabel_->setText(tr("提示: 请同时启用 M1 作为基准参考"));
+        } else {
+            activeMarkerDeltaLabel_->setText(tr("Δ 差分: ---"));
+        }
     }
-    deltaMarkerLabel_->setText(tr("M%1-M1  %2, %3 %4")
-        .arg(active + 1U)
-        .arg(formatFrequencyDelta(delta.frequencyDeltaHz))
-        .arg(delta.amplitudeDelta, 0, 'f', 2)
-        .arg(unit));
+
+    // 4. 更新全标记多路读数表 (Multi-Marker Table M1~M4)
+    for (std::size_t i = 0; i < kSpectrumMarkerCount; ++i) {
+        const MarkerMeasurement m = plot_->markerMeasurement(i);
+        auto* itemM = markerTable_->item(static_cast<int>(i), 0);
+        auto* itemF = markerTable_->item(static_cast<int>(i), 1);
+        auto* itemA = markerTable_->item(static_cast<int>(i), 2);
+        auto* itemD = markerTable_->item(static_cast<int>(i), 3);
+
+        const bool isRowActive = (i == active);
+
+        if (m.valid) {
+            itemF->setText(formatFrequency(m.frequencyHz));
+            itemA->setText(QStringLiteral("%1 %2").arg(m.amplitude, 0, 'f', 2).arg(unit));
+            if (i == 0U) {
+                itemD->setText(tr("[基准参考]"));
+            } else {
+                const auto d = plot_->deltaMarkerMeasurement(i, 0U);
+                if (d.valid) {
+                    const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
+                    itemD->setText(QStringLiteral("ΔF: %1, ΔA: %2%3 dB")
+                        .arg(formatFrequencyDelta(d.frequencyDeltaHz))
+                        .arg(signA)
+                        .arg(d.amplitudeDelta, 0, 'f', 2));
+                } else {
+                    itemD->setText(QStringLiteral("--"));
+                }
+            }
+            itemM->setText(QStringLiteral("● M%1%2").arg(i + 1U).arg(i == 0 ? tr(" [Ref]") : QString()));
+        } else {
+            itemF->setText(QStringLiteral("--"));
+            itemA->setText(QStringLiteral("--"));
+            itemD->setText(i == 0 ? tr("[基准]") : QStringLiteral("--"));
+            itemM->setText(QStringLiteral("○ M%1").arg(i + 1U));
+        }
+
+        const QColor rowBg = isRowActive ? QColor(0, 166, 255, 45) : QColor(0, 0, 0, 0);
+        for (int col = 0; col < 4; ++col) {
+            if (auto* cell = markerTable_->item(static_cast<int>(i), col)) {
+                cell->setBackground(rowBg);
+            }
+        }
+    }
 }
 
 void MainWindow::handleSpanScaleRequested(const double scaleFactor,
@@ -1338,21 +1428,21 @@ QWidget* MainWindow::buildControlPanel()
     traceViewScroll->setWidget(traceViewPage);
     mainTabWidget_->addTab(traceViewScroll, tr("迹线与瀑布"));
 
-    // Tab 4: 标记与测量 (Markers & Measure)
-    auto* markerMeasurePage = new QWidget;
-    auto* markerMeasureLayout = new QVBoxLayout(markerMeasurePage);
-    markerMeasureLayout->setContentsMargins(2, 4, 2, 4);
-    markerMeasureLayout->setSpacing(6);
-    markerMeasureLayout->addWidget(buildMarkerGroup());
-    markerMeasureLayout->addWidget(buildMeasurementGroup());
-    markerMeasureLayout->addStretch(1);
+    // Tab 4: 标记 (Markers)
+    auto* markerPage = new QWidget;
+    auto* markerLayout = new QVBoxLayout(markerPage);
+    markerLayout->setContentsMargins(2, 4, 2, 4);
+    markerLayout->setSpacing(6);
+    markerLayout->addWidget(buildMarkerGroup());
+    markerLayout->addWidget(buildMarkerTableGroup());
+    markerLayout->addStretch(1);
 
-    auto* markerMeasureScroll = new QScrollArea;
-    markerMeasureScroll->setWidgetResizable(true);
-    markerMeasureScroll->setFrameShape(QFrame::NoFrame);
-    markerMeasureScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    markerMeasureScroll->setWidget(markerMeasurePage);
-    mainTabWidget_->addTab(markerMeasureScroll, tr("标记与测量"));
+    auto* markerScroll = new QScrollArea;
+    markerScroll->setWidgetResizable(true);
+    markerScroll->setFrameShape(QFrame::NoFrame);
+    markerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    markerScroll->setWidget(markerPage);
+    mainTabWidget_->addTab(markerScroll, tr("标记"));
 
     layout->addWidget(mainTabWidget_, 1);
 
@@ -1650,33 +1740,45 @@ QWidget* MainWindow::buildTraceGroup()
 
 QWidget* MainWindow::buildMarkerGroup()
 {
-    auto* group = new QGroupBox(tr("标记（Marker）"), this);
+    auto* group = new QGroupBox(tr("标记控制 (Marker Controls)"), this);
     auto* form = new QFormLayout(group);
 
-    activeMarkerCombo_ = new QComboBox(group);
+    auto* markerSelectRow = new QWidget(group);
+    auto* markerSelectLayout = new QHBoxLayout(markerSelectRow);
+    markerSelectLayout->setContentsMargins(0, 0, 0, 0);
+
+    activeMarkerCombo_ = new QComboBox(markerSelectRow);
     activeMarkerCombo_->setObjectName(QStringLiteral("activeMarker"));
     for (std::size_t index = 0; index < kSpectrumMarkerCount; ++index) {
         activeMarkerCombo_->addItem(QStringLiteral("M%1").arg(index + 1U),
                                     static_cast<int>(index));
     }
+    markerEnabledCheck_ = new QCheckBox(tr("启用 M1"), markerSelectRow);
+    markerEnabledCheck_->setObjectName(QStringLiteral("markerEnabled"));
+    markerEnabledCheck_->setChecked(false);
+
+    markerSelectLayout->addWidget(activeMarkerCombo_, 1);
+    markerSelectLayout->addWidget(markerEnabledCheck_, 1);
+
+    markerFrequencySpin_ = new FrequencySpinBox(group);
+    markerFrequencySpin_->setObjectName(QStringLiteral("markerFrequencyMHz"));
+    markerFrequencySpin_->setFrequencyRangeHz(-5.0e9, 30.0e9);
+    markerFrequencySpin_->setFrequencyHz(1000.0e6);
+    markerFrequencySpin_->setEnabled(false);
+
     peakThresholdSpin_ = new QDoubleSpinBox(group);
     peakThresholdSpin_->setObjectName(QStringLiteral("peakThreshold"));
     peakThresholdSpin_->setRange(-180.0, 50.0);
     peakThresholdSpin_->setDecimals(1);
     peakThresholdSpin_->setValue(-100.0);
     peakThresholdSpin_->setSuffix(tr(" dBFS"));
-    deltaMarkerCheck_ = new QCheckBox(tr("相对 M1"), group);
-    deltaMarkerCheck_->setObjectName(QStringLiteral("deltaMarker"));
 
-    markerLabel_ = new QLabel(tr("M1 未启用"), group);
-    markerLabel_->setWordWrap(true);
-    deltaMarkerLabel_ = new QLabel(tr("Delta 已关闭"), group);
-    deltaMarkerLabel_->setWordWrap(true);
-    peakButton_ = new QPushButton(tr("搜索峰值"), group);
-    nextPeakButton_ = new QPushButton(tr("下一个峰值"), group);
-    previousPeakButton_ = new QPushButton(tr("上一个峰值"), group);
-    clearMarkerButton_ = new QPushButton(tr("清除当前"), group);
-    clearAllMarkersButton_ = new QPushButton(tr("清除全部"), group);
+    peakButton_ = new QPushButton(tr("搜索峰值 (Peak)"), group);
+    peakButton_->setObjectName(QStringLiteral("peakButton"));
+    previousPeakButton_ = new QPushButton(tr("◀ 上一峰值"), group);
+    previousPeakButton_->setObjectName(QStringLiteral("previousPeakButton"));
+    nextPeakButton_ = new QPushButton(tr("下一峰值 ▶"), group);
+    nextPeakButton_->setObjectName(QStringLiteral("nextPeakButton"));
 
     auto* peakButtons = new QWidget(group);
     auto* peakLayout = new QHBoxLayout(peakButtons);
@@ -1684,52 +1786,119 @@ QWidget* MainWindow::buildMarkerGroup()
     peakLayout->addWidget(previousPeakButton_);
     peakLayout->addWidget(peakButton_);
     peakLayout->addWidget(nextPeakButton_);
-    auto* clearButtons = new QWidget(group);
-    auto* clearLayout = new QHBoxLayout(clearButtons);
-    clearLayout->setContentsMargins(0, 0, 0, 0);
-    clearLayout->addWidget(clearMarkerButton_);
-    clearLayout->addWidget(clearAllMarkersButton_);
 
-    form->addRow(tr("活动标记"), activeMarkerCombo_);
+    markerToCenterButton_ = new QPushButton(tr("设为中心频率 (M->CF)"), group);
+    markerToCenterButton_->setObjectName(QStringLiteral("markerToCenterButton"));
+    clearMarkerButton_ = new QPushButton(tr("清除当前"), group);
+    clearMarkerButton_->setObjectName(QStringLiteral("clearMarkerButton"));
+    clearAllMarkersButton_ = new QPushButton(tr("清除全部"), group);
+    clearAllMarkersButton_->setObjectName(QStringLiteral("clearAllMarkersButton"));
+
+    auto* actionButtons = new QWidget(group);
+    auto* actionLayout = new QHBoxLayout(actionButtons);
+    actionLayout->setContentsMargins(0, 0, 0, 0);
+    actionLayout->addWidget(markerToCenterButton_);
+    actionLayout->addWidget(clearMarkerButton_);
+    actionLayout->addWidget(clearAllMarkersButton_);
+
+    form->addRow(tr("活动标记"), markerSelectRow);
+    form->addRow(tr("标记频率"), markerFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("峰值门限"), peakThresholdSpin_);
-    form->addRow(tr("Delta"), deltaMarkerCheck_);
-    form->addRow(tr("当前读数"), markerLabel_);
-    form->addRow(tr("相对读数"), deltaMarkerLabel_);
     form->addRow(peakButtons);
-    form->addRow(clearButtons);
+    form->addRow(actionButtons);
+
     return group;
 }
 
-QWidget* MainWindow::buildMeasurementGroup()
+QWidget* MainWindow::buildMarkerTableGroup()
 {
-    auto* group = new QGroupBox(tr("区间测量"), this);
-    auto* form = new QFormLayout(group);
-    measurementStartSpin_ = new FrequencySpinBox(group);
-    measurementStartSpin_->setObjectName(QStringLiteral("measurementStartMHz"));
-    measurementStartSpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
-    measurementStartSpin_->setFrequencyHz(900.0e6);
+    auto* group = new QGroupBox(tr("标记参数与读数 (Marker Readouts)"), this);
+    auto* vbox = new QVBoxLayout(group);
+    vbox->setSpacing(8);
 
-    measurementStopSpin_ = new FrequencySpinBox(group);
-    measurementStopSpin_->setObjectName(QStringLiteral("measurementStopMHz"));
-    measurementStopSpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
-    measurementStopSpin_->setFrequencyHz(1100.0e6);
+    // 1. 活动标记主读数卡片 (Active Marker Card)
+    auto* activeCard = new QFrame(group);
+    activeCard->setObjectName(QStringLiteral("activeMarkerCard"));
+    activeCard->setStyleSheet(QStringLiteral(
+        "QFrame#activeMarkerCard {"
+        "  background-color: #071018;"
+        "  border: 1px solid #1A3045;"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "}"
+    ));
+    auto* cardLayout = new QVBoxLayout(activeCard);
+    cardLayout->setContentsMargins(6, 6, 6, 6);
+    cardLayout->setSpacing(2);
 
-    rangePeakButton_ = new QPushButton(tr("区间峰值"), group);
-    rangePeakButton_->setObjectName(QStringLiteral("rangePeakButton"));
-    channelPowerButton_ = new QPushButton(tr("信道功率"), group);
-    channelPowerButton_->setObjectName(QStringLiteral("channelPowerButton"));
-    measurementResultLabel_ = new QLabel(tr("尚未测量"), group);
-    measurementResultLabel_->setObjectName(QStringLiteral("measurementResult"));
-    measurementResultLabel_->setWordWrap(true);
-    auto* buttons = new QWidget(group);
-    auto* layout = new QHBoxLayout(buttons);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(rangePeakButton_);
-    layout->addWidget(channelPowerButton_);
-    form->addRow(tr("起始频率"), measurementStartSpin_->createCompoundWidget(group));
-    form->addRow(tr("终止频率"), measurementStopSpin_->createCompoundWidget(group));
-    form->addRow(buttons);
-    form->addRow(tr("结果"), measurementResultLabel_);
+    markerLabel_ = new QLabel(tr("M1 未启用"), activeCard);
+    markerLabel_->setObjectName(QStringLiteral("markerLabel"));
+    markerLabel_->setWordWrap(true);
+    QFont monoFont(QStringLiteral("Consolas, Courier New, monospace"));
+    monoFont.setPointSize(10);
+    monoFont.setBold(true);
+    markerLabel_->setFont(monoFont);
+    markerLabel_->setStyleSheet(QStringLiteral("color: #FFD54F;"));
+
+    activeMarkerDeltaLabel_ = new QLabel(tr("Δ 差分: ---"), activeCard);
+    activeMarkerDeltaLabel_->setObjectName(QStringLiteral("activeMarkerDeltaLabel"));
+    activeMarkerDeltaLabel_->setWordWrap(true);
+    QFont deltaFont(QStringLiteral("Consolas, Courier New, monospace"));
+    deltaFont.setPointSize(9);
+    activeMarkerDeltaLabel_->setFont(deltaFont);
+    activeMarkerDeltaLabel_->setStyleSheet(QStringLiteral("color: #80D8FF;"));
+
+    cardLayout->addWidget(markerLabel_);
+    cardLayout->addWidget(activeMarkerDeltaLabel_);
+    vbox->addWidget(activeCard);
+
+    // 2. 多标记一览表 (Multi-Marker Table)
+    markerTable_ = new QTableWidget(4, 4, group);
+    markerTable_->setObjectName(QStringLiteral("markerTable"));
+    markerTable_->setHorizontalHeaderLabels({ tr("标记"), tr("频率"), tr("幅度"), tr("Δ 相对M1") });
+    markerTable_->verticalHeader()->setVisible(false);
+    markerTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    markerTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    markerTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    markerTable_->setShowGrid(true);
+    markerTable_->horizontalHeader()->setStretchLastSection(true);
+    markerTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    markerTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    markerTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    markerTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    markerTable_->setFixedHeight(130);
+
+    const QStringList markerNames = { QStringLiteral("● M1"), QStringLiteral("● M2"), QStringLiteral("● M3"), QStringLiteral("● M4") };
+    const QColor markerColors[] = { QColor(255, 213, 79), QColor(0, 229, 255), QColor(255, 64, 129), QColor(0, 230, 118) };
+
+    for (int row = 0; row < 4; ++row) {
+        auto* itemM = new QTableWidgetItem(markerNames[row]);
+        itemM->setForeground(markerColors[row]);
+        itemM->setTextAlignment(Qt::AlignCenter);
+
+        auto* itemF = new QTableWidgetItem(QStringLiteral("--"));
+        itemF->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+        auto* itemA = new QTableWidgetItem(QStringLiteral("--"));
+        itemA->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+        auto* itemD = new QTableWidgetItem(row == 0 ? tr("[基准]") : QStringLiteral("--"));
+        itemD->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+        markerTable_->setItem(row, 0, itemM);
+        markerTable_->setItem(row, 1, itemF);
+        markerTable_->setItem(row, 2, itemA);
+        markerTable_->setItem(row, 3, itemD);
+        markerTable_->setRowHeight(row, 24);
+    }
+
+    connect(markerTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
+        if (row >= 0 && row < static_cast<int>(kSpectrumMarkerCount)) {
+            activeMarkerCombo_->setCurrentIndex(row);
+        }
+    });
+
+    vbox->addWidget(markerTable_);
     return group;
 }
 
@@ -1816,41 +1985,40 @@ void MainWindow::connectUi()
         connect(saveScenarioButton_, &QPushButton::clicked,
                 this, &MainWindow::saveSimulationScenario);
     }
-    connect(peakButton_, &QPushButton::clicked, plot_, &SpectrumPlotWidget::peakSearch);
-    connect(nextPeakButton_, &QPushButton::clicked,
-            plot_, &SpectrumPlotWidget::nextPeak);
-    connect(previousPeakButton_, &QPushButton::clicked,
-            plot_, &SpectrumPlotWidget::previousPeak);
-    connect(clearMarkerButton_, &QPushButton::clicked, plot_, &SpectrumPlotWidget::clearMarker);
-    connect(clearAllMarkersButton_, &QPushButton::clicked,
-            plot_, &SpectrumPlotWidget::clearAllMarkers);
-    connect(activeMarkerCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](const int index) {
-        plot_->setActiveMarker(static_cast<std::size_t>(std::max(index, 0)));
+    connect(peakButton_, &QPushButton::clicked, this, [this] {
+        plot_->peakSearch();
         refreshMarkerLabels();
     });
+    connect(nextPeakButton_, &QPushButton::clicked, this, [this] {
+        plot_->nextPeak();
+        refreshMarkerLabels();
+    });
+    connect(previousPeakButton_, &QPushButton::clicked, this, [this] {
+        plot_->previousPeak();
+        refreshMarkerLabels();
+    });
+    connect(markerToCenterButton_, &QPushButton::clicked, this, &MainWindow::markerToCenter);
+    connect(clearMarkerButton_, &QPushButton::clicked, this, [this] {
+        plot_->clearMarker();
+        refreshMarkerLabels();
+    });
+    connect(clearAllMarkersButton_, &QPushButton::clicked, this, [this] {
+        plot_->clearAllMarkers();
+        refreshMarkerLabels();
+    });
+    connect(activeMarkerCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](const int index) {
+        if (index >= 0) {
+            plot_->setActiveMarker(static_cast<std::size_t>(index));
+            refreshMarkerLabels();
+        }
+    });
+    connect(markerEnabledCheck_, &QCheckBox::toggled, this, &MainWindow::handleMarkerEnableToggled);
+    connect(markerFrequencySpin_, &FrequencySpinBox::editingFinished, this, &MainWindow::applyMarkerFrequencyFromUi);
     connect(peakThresholdSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged),
             this, [this](const double threshold) {
         plot_->setPeakThreshold(static_cast<float>(threshold));
     });
-    connect(deltaMarkerCheck_, &QCheckBox::toggled, this, [this](const bool enabled) {
-        plot_->setDeltaMarkerEnabled(enabled);
-        refreshMarkerLabels();
-    });
-    connect(rangePeakButton_, &QPushButton::clicked,
-            this, &MainWindow::measureRangePeak);
-    connect(channelPowerButton_, &QPushButton::clicked,
-            this, &MainWindow::measureChannelPower);
-    const auto normalizeMeasurementRange = [this] {
-        if (measurementStartSpin_->value() >= measurementStopSpin_->value()) {
-            const QSignalBlocker blocker(measurementStopSpin_);
-            measurementStopSpin_->setValue(measurementStartSpin_->value() + 0.001);
-        }
-    };
-    connect(measurementStartSpin_, &QDoubleSpinBox::editingFinished,
-            this, normalizeMeasurementRange);
-    connect(measurementStopSpin_, &QDoubleSpinBox::editingFinished,
-            this, normalizeMeasurementRange);
     connect(plot_, &SpectrumPlotWidget::markerCleared, this, [this] {
         refreshMarkerLabels();
     });

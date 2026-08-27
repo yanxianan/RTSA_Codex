@@ -12,6 +12,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QtTest>
 
 #include <algorithm>
@@ -67,7 +68,7 @@ private slots:
     void initialScenarioPopulatesControlsAndSource();
     void invalidSweepOffsetsAreCorrected();
     void markerControlsSupportFourMarkersAndDelta();
-    void rangeMeasurementsUseLatestFullFrame();
+    void canvasSingleClickDoesNotPlaceMarkers();
     void telemetryShowsProcessingRenderAndQueueDepth();
     void unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges();
     void frequencySpinBoxSeparatesValueAndUnitWithAutoScaling();
@@ -433,47 +434,70 @@ void MainWindowTests::markerControlsSupportFourMarkersAndDelta()
     auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
     auto* active = window.findChild<QComboBox*>(QStringLiteral("activeMarker"));
     auto* threshold = window.findChild<QDoubleSpinBox*>(QStringLiteral("peakThreshold"));
-    auto* delta = window.findChild<QCheckBox*>(QStringLiteral("deltaMarker"));
-    QVERIFY(plot && active && threshold && delta);
+    auto* markerEnabled = window.findChild<QCheckBox*>(QStringLiteral("markerEnabled"));
+    auto* markerFreq = window.findChild<FrequencySpinBox*>(QStringLiteral("markerFrequencyMHz"));
+    auto* markerTable = window.findChild<QTableWidget*>(QStringLiteral("markerTable"));
+    auto* markerLabel = window.findChild<QLabel*>(QStringLiteral("markerLabel"));
+    auto* deltaLabel = window.findChild<QLabel*>(QStringLiteral("activeMarkerDeltaLabel"));
+    auto* mToCf = window.findChild<QPushButton*>(QStringLiteral("markerToCenterButton"));
+    auto* center = window.findChild<FrequencySpinBox*>(QStringLiteral("centerFrequencyMHz"));
+
+    QVERIFY(plot && active && threshold && markerEnabled && markerFreq && markerTable && markerLabel && deltaLabel && mToCf && center);
     QCOMPARE(active->count(), 4);
+    QCOMPARE(markerTable->rowCount(), 4);
 
     window.singleAcquisition();
     QTRY_VERIFY_WITH_TIMEOUT(plot->frame() != nullptr, 1000);
     threshold->setValue(-180.0);
+
+    // M1 Peak Search
     active->setCurrentIndex(0);
     plot->peakSearch();
     QVERIFY(plot->markerBin(0).has_value());
+
+    // M2 Peak Search & Next Peak
     active->setCurrentIndex(1);
     plot->peakSearch();
     plot->nextPeak();
     QVERIFY(plot->markerBin(1).has_value());
     QVERIFY(plot->markerBin(0).has_value());
-    delta->setChecked(true);
+
+    // Delta measurement is automatically valid without any checkbox
     QVERIFY(plot->deltaMarkerMeasurement().valid);
+    QVERIFY(deltaLabel->text().contains(QStringLiteral("Δ(M2 - M1)")));
+    QVERIFY(markerTable->item(1, 3)->text().contains(QStringLiteral("ΔF:")));
+
+    // Test Marker -> Center Frequency (M->CF)
+    const double m2Freq = plot->markerMeasurement(1).frequencyHz;
+    mToCf->click();
+    QCOMPARE(center->frequencyHz(), m2Freq);
 }
 
-void MainWindowTests::rangeMeasurementsUseLatestFullFrame()
+void MainWindowTests::canvasSingleClickDoesNotPlaceMarkers()
 {
     MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
     auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
-    auto* start = window.findChild<QDoubleSpinBox*>(QStringLiteral("measurementStartMHz"));
-    auto* stop = window.findChild<QDoubleSpinBox*>(QStringLiteral("measurementStopMHz"));
-    auto* result = window.findChild<QLabel*>(QStringLiteral("measurementResult"));
-    QVERIFY(plot && start && stop && result);
+    QVERIFY(plot);
 
     window.singleAcquisition();
     QTRY_VERIFY_WITH_TIMEOUT(plot->frame() != nullptr, 1000);
-    start->setValue(900.0);
-    stop->setValue(1100.0);
-    QVERIFY(QMetaObject::invokeMethod(&window, "measureRangePeak"));
-    QVERIFY(result->text().contains(QStringLiteral("峰值")));
-    QVERIFY(result->text().contains(QStringLiteral("dBFS")));
-    QVERIFY(result->text().contains(QStringLiteral("未校准")));
+    plot->clearAllMarkers();
+    for (std::size_t i = 0; i < kSpectrumMarkerCount; ++i) {
+        QVERIFY(!plot->markerBin(i).has_value());
+    }
 
-    QVERIFY(QMetaObject::invokeMethod(&window, "measureChannelPower"));
-    QVERIFY(result->text().contains(QStringLiteral("信道功率")));
-    QVERIFY(result->text().contains(QStringLiteral("dBFS")));
-    QVERIFY(result->text().contains(QStringLiteral("未校准")));
+    // Single click on canvas center
+    const QPoint centerPoint = plot->rect().center();
+    QTest::mouseClick(plot, Qt::LeftButton, Qt::NoModifier, centerPoint);
+
+    // Verify canvas click did NOT create/trigger any marker
+    for (std::size_t i = 0; i < kSpectrumMarkerCount; ++i) {
+        QVERIFY(!plot->markerBin(i).has_value());
+    }
+
+    // Now enable M1 through API / Peak Search
+    plot->peakSearch();
+    QVERIFY(plot->markerBin(0).has_value());
 }
 
 void MainWindowTests::telemetryShowsProcessingRenderAndQueueDepth()

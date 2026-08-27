@@ -189,6 +189,57 @@ bool SpectrumPlotWidget::deltaMarkerEnabled() const noexcept
     return deltaMarkerEnabled_;
 }
 
+void SpectrumPlotWidget::setMarkerFrequency(const std::size_t markerIndex, const double frequencyHz)
+{
+    if (markerIndex >= kSpectrumMarkerCount) {
+        return;
+    }
+    if (std::isfinite(frequencyHz)) {
+        markerFrequenciesHz_[markerIndex] = frequencyHz;
+    } else {
+        markerFrequenciesHz_[markerIndex].reset();
+    }
+    updateRendererMarkers();
+    if (markerIndex == activeMarkerIndex_) {
+        publishActiveMarker();
+    }
+    update();
+}
+
+void SpectrumPlotWidget::setMarkerEnabled(const std::size_t markerIndex, const bool enabled)
+{
+    if (markerIndex >= kSpectrumMarkerCount) {
+        return;
+    }
+    if (enabled) {
+        if (!markerFrequenciesHz_[markerIndex]) {
+            if (frame_ && !frame_->bins.empty()) {
+                markerFrequenciesHz_[markerIndex] = frame_->metadata.centerFrequencyHz;
+            } else {
+                markerFrequenciesHz_[markerIndex] = 1.0e9;
+            }
+        }
+    } else {
+        markerFrequenciesHz_[markerIndex].reset();
+    }
+    updateRendererMarkers();
+    publishActiveMarker();
+    update();
+}
+
+bool SpectrumPlotWidget::isMarkerEnabled(const std::size_t markerIndex) const noexcept
+{
+    return markerIndex < kSpectrumMarkerCount && markerFrequenciesHz_[markerIndex].has_value();
+}
+
+std::optional<double> SpectrumPlotWidget::markerFrequency(const std::size_t markerIndex) const noexcept
+{
+    if (markerIndex < kSpectrumMarkerCount) {
+        return markerFrequenciesHz_[markerIndex];
+    }
+    return std::nullopt;
+}
+
 std::size_t SpectrumPlotWidget::envelopeColumnCount() const noexcept
 {
     return renderer_.envelopeColumnCount();
@@ -234,18 +285,27 @@ MarkerMeasurement SpectrumPlotWidget::markerMeasurement(
 
 DeltaMarkerMeasurement SpectrumPlotWidget::deltaMarkerMeasurement() const noexcept
 {
-    if (!deltaMarkerEnabled_ || activeMarkerIndex_ == 0U) {
+    if (activeMarkerIndex_ == 0U) {
+        return deltaMarkerMeasurement(1U, 0U);
+    }
+    return deltaMarkerMeasurement(activeMarkerIndex_, 0U);
+}
+
+DeltaMarkerMeasurement SpectrumPlotWidget::deltaMarkerMeasurement(
+    const std::size_t markerIndex, const std::size_t referenceIndex) const noexcept
+{
+    if (markerIndex == referenceIndex || markerIndex >= kSpectrumMarkerCount || referenceIndex >= kSpectrumMarkerCount) {
         return {};
     }
-    const MarkerMeasurement reference = markerMeasurement(0U);
-    const MarkerMeasurement active = markerMeasurement(activeMarkerIndex_);
-    if (!reference.valid || !active.valid) {
+    const MarkerMeasurement reference = markerMeasurement(referenceIndex);
+    const MarkerMeasurement target = markerMeasurement(markerIndex);
+    if (!reference.valid || !target.valid) {
         return {};
     }
     return DeltaMarkerMeasurement {
         true,
-        active.frequencyHz - reference.frequencyHz,
-        active.amplitude - reference.amplitude
+        target.frequencyHz - reference.frequencyHz,
+        target.amplitude - reference.amplitude
     };
 }
 
@@ -339,7 +399,6 @@ void SpectrumPlotWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
 
-    const bool wasPanning = panning_;
     const bool wasBoxZooming = boxZooming_;
     leftButtonPressed_ = false;
     panning_ = false;
@@ -364,8 +423,6 @@ void SpectrumPlotWidget::mouseReleaseEvent(QMouseEvent* event)
             }
             emit frequencyRangeSelected(startHz, stopHz);
         }
-    } else if (!wasPanning && renderer_.plotRect().contains(mousePosition(event))) {
-        selectMarkerAt(mousePosition(event));
     }
     event->accept();
 }

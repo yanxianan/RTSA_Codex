@@ -55,11 +55,17 @@ public:
     void setDeltaMarkerEnabled(bool enabled);
     bool deltaMarkerEnabled() const noexcept;
 
+    void setMarkerFrequency(std::size_t markerIndex, double frequencyHz);
+    void setMarkerEnabled(std::size_t markerIndex, bool enabled);
+    bool isMarkerEnabled(std::size_t markerIndex) const noexcept;
+    std::optional<double> markerFrequency(std::size_t markerIndex) const noexcept;
+
     std::size_t envelopeColumnCount() const noexcept;
     std::optional<std::size_t> markerBin() const noexcept;
     std::optional<std::size_t> markerBin(std::size_t markerIndex) const noexcept;
     MarkerMeasurement markerMeasurement(std::size_t markerIndex) const noexcept;
     DeltaMarkerMeasurement deltaMarkerMeasurement() const noexcept;
+    DeltaMarkerMeasurement deltaMarkerMeasurement(std::size_t markerIndex, std::size_t referenceIndex = 0) const noexcept;
     double lastPaintMilliseconds() const noexcept;
 
 signals:
