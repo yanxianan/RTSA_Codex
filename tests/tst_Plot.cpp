@@ -25,6 +25,7 @@ private slots:
     void markerTracksFrequencyAcrossFrames();
     void markerClearsOutsideNewSpan();
     void fourMarkersDeltaAndAdjacentPeakSearch();
+    void wideGaussianPeakWithNoisySkirtFindsApexNotSkirt();
     void peakThresholdRejectsLowSignals();
     void doubleClickRequestsFrequencyReset();
     void dragRequestsFrequencyPan();
@@ -214,6 +215,62 @@ void PlotTests::fourMarkersDeltaAndAdjacentPeakSearch()
     for (std::size_t index = 0; index < kSpectrumMarkerCount; ++index) {
         QVERIFY(!widget.markerBin(index).has_value());
     }
+}
+
+void PlotTests::wideGaussianPeakWithNoisySkirtFindsApexNotSkirt()
+{
+    auto frame = std::make_shared<SpectrumFrame>();
+    frame->metadata.sequence = 1;
+    frame->metadata.binCount = 1024;
+    frame->metadata.centerFrequencyHz = 500.0e6;
+    frame->metadata.spanHz = 1000.0e6;
+    frame->bins.assign(1024, -108.0F);
+
+    // Left peak: wide Gaussian centered at bin 200, apex -54 dBFS, sigma = 20 bins
+    for (int offset = -100; offset <= 100; ++offset) {
+        const int b = 200 + offset;
+        if (b >= 0 && b < 1024) {
+            const float toneDb = -54.0F - 2.1714F * (static_cast<float>(offset * offset)) / 400.0F;
+            frame->bins[b] = std::max(frame->bins[b], toneDb);
+        }
+    }
+    // Add local noise ripples on the slope at bin 240 and 260 (+0.8 dB wiggles)
+    frame->bins[240] = frame->bins[240] + 0.8F;
+    frame->bins[260] = frame->bins[260] + 0.8F;
+
+    // Middle peak: highest peak at bin 500, apex -11 dBFS
+    for (int offset = -40; offset <= 40; ++offset) {
+        const int b = 500 + offset;
+        if (b >= 0 && b < 1024) {
+            const float db = -11.0F - (offset * offset) / 25.0F;
+            frame->bins[b] = std::max(frame->bins[b], db);
+        }
+    }
+
+    // Right peak: narrow peak at bin 800, apex -36 dBFS
+    frame->bins[799] = -50.0F;
+    frame->bins[800] = -36.0F;
+    frame->bins[801] = -50.0F;
+
+    SpectrumPlotWidget widget;
+    widget.setFrame(frame);
+    widget.setPeakThreshold(-100.0F);
+
+    // 1. Peak Search finds the global highest peak (bin 500)
+    widget.peakSearch();
+    QCOMPARE(widget.markerBin(0), std::optional<std::size_t>(500U));
+
+    // 2. Previous Peak (Search Left) MUST find the apex of the left peak (bin 200), NOT the skirt wiggles at 245/250!
+    widget.previousPeak();
+    QCOMPARE(widget.markerBin(0), std::optional<std::size_t>(200U));
+
+    // 3. Next Peak (Search Right) returns to middle peak (bin 500)
+    widget.nextPeak();
+    QCOMPARE(widget.markerBin(0), std::optional<std::size_t>(500U));
+
+    // 4. Next Peak (Search Right) finds the right peak (bin 800)
+    widget.nextPeak();
+    QCOMPARE(widget.markerBin(0), std::optional<std::size_t>(800U));
 }
 
 void PlotTests::peakThresholdRejectsLowSignals()

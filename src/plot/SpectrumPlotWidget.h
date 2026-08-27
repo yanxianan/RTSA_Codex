@@ -99,6 +99,7 @@ private:
     void publishActiveMarker();
     void updateRendererMarkers();
     void searchAdjacentPeak(int direction);
+    std::vector<std::size_t> findPeaks() const;
     bool isPeak(std::size_t bin) const noexcept;
 
     ConstSpectrumFramePtr frame_;

@@ -133,25 +133,43 @@ void SpectrumPlotWidget::peakSearch()
     if (!frame_ || frame_->bins.empty()) {
         return;
     }
-    const auto peak = std::max_element(
-        frame_->bins.cbegin(), frame_->bins.cend(), [](float left, float right) {
-            if (!std::isfinite(left)) {
-                return true;
+
+    const auto peaks = findPeaks();
+    std::size_t bestBin = 0U;
+    float maxAmp = -1e9F;
+    bool found = false;
+
+    if (!peaks.empty()) {
+        for (const std::size_t p : peaks) {
+            if (frame_->bins[p] > maxAmp) {
+                maxAmp = frame_->bins[p];
+                bestBin = p;
+                found = true;
             }
-            if (!std::isfinite(right)) {
-                return false;
-            }
-            return left < right;
-        });
-    if (peak == frame_->bins.cend() || !std::isfinite(*peak)) {
+        }
+    } else {
+        const auto peak = std::max_element(
+            frame_->bins.cbegin(), frame_->bins.cend(), [](float left, float right) {
+                if (!std::isfinite(left)) {
+                    return true;
+                }
+                if (!std::isfinite(right)) {
+                    return false;
+                }
+                return left < right;
+            });
+        if (peak != frame_->bins.cend() && std::isfinite(*peak) && *peak >= peakThreshold_) {
+            bestBin = static_cast<std::size_t>(std::distance(frame_->bins.cbegin(), peak));
+            found = true;
+        }
+    }
+
+    if (!found) {
         return;
     }
-    if (*peak < peakThreshold_) {
-        return;
-    }
-    const auto bin = static_cast<std::size_t>(std::distance(frame_->bins.cbegin(), peak));
+
     markerFrequenciesHz_[activeMarkerIndex_] =
-        FrequencyMapper::frequencyForBin(frame_->metadata, bin);
+        FrequencyMapper::frequencyForBin(frame_->metadata, bestBin);
     updateRendererMarkers();
     publishActiveMarker();
     update();
@@ -606,28 +624,131 @@ void SpectrumPlotWidget::updateRendererMarkers()
     renderer_.setMarkerBins(bins, activeMarkerIndex_);
 }
 
+std::vector<std::size_t> SpectrumPlotWidget::findPeaks() const
+{
+    std::vector<std::size_t> peaks;
+    if (!frame_ || frame_->bins.size() < 3) {
+        return peaks;
+    }
+
+    const auto& data = frame_->bins;
+    const std::size_t n = data.size();
+    constexpr float kExcursion = 3.0F; // 工业标准 3 dB 峰值凸起高度 (Peak Excursion)
+
+    for (std::size_t i = 0; i < n; ++i) {
+        const float val = data[i];
+        if (!std::isfinite(val) || val < peakThreshold_) {
+            continue;
+        }
+
+        // 1. 局部极大值条件（不低于相邻有效采样点）
+        const bool notBelowLeft = (i == 0 || !std::isfinite(data[i - 1]) || val >= data[i - 1]);
+        const bool notBelowRight = (i + 1 == n || !std::isfinite(data[i + 1]) || val >= data[i + 1]);
+        if (!notBelowLeft || !notBelowRight) {
+            continue;
+        }
+
+        // 如果是平顶峰，仅保留平顶区间的首个点避免重复
+        if (i > 0 && data[i - 1] == val) {
+            continue;
+        }
+
+        // 2. 向左检测谷底落差：在遇到更高点之前，必须向下掉落至少 kExcursion
+        float leftMin = val;
+        bool leftValid = false;
+        for (std::size_t l = i; l > 0; --l) {
+            const float lv = data[l - 1];
+            if (!std::isfinite(lv)) {
+                break;
+            }
+            if (lv > val) {
+                // 遇到更高点，说明当前点仅处于某个更高主峰的侧翼上，不是独立山头
+                break;
+            }
+            if (lv < leftMin) {
+                leftMin = lv;
+            }
+            if (val - leftMin >= kExcursion) {
+                leftValid = true;
+                break;
+            }
+        }
+        // 若向左已达边界且未遇更高点，且落差 >= 1.0 dB（或靠近边界），则认可左侧
+        if (!leftValid && (i <= 3 || val - leftMin >= 1.0F)) {
+            leftValid = true;
+        }
+
+        if (!leftValid) {
+            continue;
+        }
+
+        // 3. 向右检测谷底落差：在遇到更高点之前，必须向下掉落至少 kExcursion
+        float rightMin = val;
+        bool rightValid = false;
+        for (std::size_t r = i + 1; r < n; ++r) {
+            const float rv = data[r];
+            if (!std::isfinite(rv)) {
+                break;
+            }
+            if (rv > val) {
+                // 遇到更高点，说明当前点仅处于某个更高主峰的侧翼上
+                break;
+            }
+            if (rv < rightMin) {
+                rightMin = rv;
+            }
+            if (val - rightMin >= kExcursion) {
+                rightValid = true;
+                break;
+            }
+        }
+        // 若向右已达边界且未遇更高点，且落差 >= 1.0 dB（或靠近边界），则认可右侧
+        if (!rightValid && (i + 4 >= n || val - rightMin >= 1.0F)) {
+            rightValid = true;
+        }
+
+        if (leftValid && rightValid) {
+            peaks.push_back(i);
+        }
+    }
+
+    // 4. 峰值非极大值抑制（Non-Maximum Suppression）：
+    // 若两个峰值之间未下潜落差至 kExcursion（属于同一主瓣内未彻底分开的起伏），仅保留更高者
+    if (peaks.size() > 1) {
+        std::vector<std::size_t> filtered;
+        for (std::size_t p : peaks) {
+            if (filtered.empty()) {
+                filtered.push_back(p);
+                continue;
+            }
+            const std::size_t prev = filtered.back();
+            float valley = std::min(data[prev], data[p]);
+            for (std::size_t k = prev + 1; k < p; ++k) {
+                if (std::isfinite(data[k]) && data[k] < valley) {
+                    valley = data[k];
+                }
+            }
+            if (data[prev] - valley < kExcursion && data[p] - valley < kExcursion) {
+                if (data[p] > data[prev]) {
+                    filtered.back() = p;
+                }
+            } else {
+                filtered.push_back(p);
+            }
+        }
+        peaks = std::move(filtered);
+    }
+
+    return peaks;
+}
+
 bool SpectrumPlotWidget::isPeak(const std::size_t bin) const noexcept
 {
     if (!frame_ || bin >= frame_->bins.size()) {
         return false;
     }
-    const float value = frame_->bins[bin];
-    if (!std::isfinite(value) || value < peakThreshold_) {
-        return false;
-    }
-    const bool notBelowLeft = bin == 0U
-        || !std::isfinite(frame_->bins[bin - 1U])
-        || value >= frame_->bins[bin - 1U];
-    const bool notBelowRight = bin + 1U >= frame_->bins.size()
-        || !std::isfinite(frame_->bins[bin + 1U])
-        || value >= frame_->bins[bin + 1U];
-    const bool strictlyAboveNeighbor = (bin > 0U
-        && std::isfinite(frame_->bins[bin - 1U])
-        && value > frame_->bins[bin - 1U])
-        || (bin + 1U < frame_->bins.size()
-            && std::isfinite(frame_->bins[bin + 1U])
-            && value > frame_->bins[bin + 1U]);
-    return notBelowLeft && notBelowRight && strictlyAboveNeighbor;
+    const auto peaks = findPeaks();
+    return std::find(peaks.begin(), peaks.end(), bin) != peaks.end();
 }
 
 void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
@@ -641,20 +762,53 @@ void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
         return;
     }
 
-    const std::size_t count = frame_->bins.size();
-    for (std::size_t offset = 1U; offset < count; ++offset) {
-        const std::size_t candidate = direction > 0
-            ? (current.bin + offset) % count
-            : (current.bin + count - (offset % count)) % count;
-        if (!isPeak(candidate)) {
-            continue;
-        }
-        markerFrequenciesHz_[activeMarkerIndex_] =
-            FrequencyMapper::frequencyForBin(frame_->metadata, candidate);
-        updateRendererMarkers();
-        publishActiveMarker();
-        update();
+    const auto peaks = findPeaks();
+    if (peaks.empty()) {
         return;
+    }
+
+    if (direction > 0) {
+        // 向右搜索（频率更高）：找第一个 bin > current.bin 的独立真峰
+        for (const std::size_t p : peaks) {
+            if (p > current.bin) {
+                markerFrequenciesHz_[activeMarkerIndex_] =
+                    FrequencyMapper::frequencyForBin(frame_->metadata, p);
+                updateRendererMarkers();
+                publishActiveMarker();
+                update();
+                return;
+            }
+        }
+        // 循环跳转到最左侧峰 (Wrap around)
+        const std::size_t first = peaks.front();
+        if (first != current.bin) {
+            markerFrequenciesHz_[activeMarkerIndex_] =
+                FrequencyMapper::frequencyForBin(frame_->metadata, first);
+            updateRendererMarkers();
+            publishActiveMarker();
+            update();
+        }
+    } else {
+        // 向左搜索（频率更低）：逆序找第一个 bin < current.bin 的独立真峰
+        for (auto it = peaks.rbegin(); it != peaks.rend(); ++it) {
+            if (*it < current.bin) {
+                markerFrequenciesHz_[activeMarkerIndex_] =
+                    FrequencyMapper::frequencyForBin(frame_->metadata, *it);
+                updateRendererMarkers();
+                publishActiveMarker();
+                update();
+                return;
+            }
+        }
+        // 循环跳转到最右侧峰 (Wrap around)
+        const std::size_t last = peaks.back();
+        if (last != current.bin) {
+            markerFrequenciesHz_[activeMarkerIndex_] =
+                FrequencyMapper::frequencyForBin(frame_->metadata, last);
+            updateRendererMarkers();
+            publishActiveMarker();
+            update();
+        }
     }
 }
 
