@@ -511,9 +511,14 @@ QRect SpectrumPlotWidget::calculatePlotRect() const
 {
     constexpr int leftMargin = 76;
     constexpr int topMargin = 30;
-    constexpr int rightMargin = 20;
+    constexpr int rightMargin = 72;
     constexpr int bottomMargin = 54;
     return rect().adjusted(leftMargin, topMargin, -rightMargin, -bottomMargin);
+}
+
+QRect SpectrumPlotWidget::plotRect() const
+{
+    return calculatePlotRect();
 }
 
 std::size_t SpectrumPlotWidget::binAtPosition(const QPoint& position) const

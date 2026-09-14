@@ -22,6 +22,7 @@ private slots:
     void waterfallOffscreenPaintPerformance();
     void waterfallAlwaysPlacesNewestFrameAtTop();
     void historyIsPreservedAcrossParameterChangesAndResize();
+    void fullScreenResizeResamplesHistoryWithoutDisplacementOrBlackVoid();
 };
 
 void WaterfallTests::colormapTableGeneratesValidEntries()
@@ -243,6 +244,48 @@ void WaterfallTests::historyIsPreservedAcrossParameterChangesAndResize()
         maxOldRed = std::max(maxOldRed, img.pixelColor(oldPeakX, y).red());
     }
     QVERIFY2(maxOldRed > 180, "Old peak was incorrectly erased from history");
+}
+
+void WaterfallTests::fullScreenResizeResamplesHistoryWithoutDisplacementOrBlackVoid()
+{
+    WaterfallPlotWidget widget;
+    widget.resize(800, 400);
+    widget.setHistoryDepth(128);
+    widget.setAmplitudeScale(0.0F, -100.0F);
+
+    auto frame = std::make_shared<SpectrumFrame>();
+    frame->metadata.binCount = 1000;
+    frame->metadata.centerFrequencyHz = 1.0e9;
+    frame->metadata.spanHz = 100.0e6;
+    frame->bins.assign(1000, -100.0F);
+    frame->bins[750] = 0.0F; // Peak at 75% of span (near right side)
+
+    for (int i = 0; i < 30; ++i) {
+        frame->metadata.sequence = i + 1;
+        widget.addFrame(frame);
+    }
+
+    // Resize widget horizontally (simulating entering full screen from 800 to 1600)
+    widget.resize(1600, 400);
+
+    QImage img(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::black);
+    QPainter p(&img);
+    widget.render(&p);
+    p.end();
+
+    const QRect rect = widget.plotRect();
+    // Peak was at 75% of span. In the resized widget, peak must still be at 75% of rect.width()!
+    const int expectedPeakX = rect.left() + static_cast<int>(std::round(rect.width() * 0.75));
+    int peakBrightness = 0;
+    for (int y = rect.top() + 10; y <= rect.bottom(); ++y) {
+        peakBrightness = std::max(peakBrightness, img.pixelColor(expectedPeakX, y).red());
+    }
+    QVERIFY2(peakBrightness > 180, "Peak at 75% was displaced or lost after horizontal resize");
+
+    // Check right edge of the plot: must NOT be black void (should have noise floor color)
+    const QColor rightEdgePixel = img.pixelColor(rect.right() - 5, rect.bottom() - 10);
+    QVERIFY2(rightEdgePixel != QColor(0, 0, 0), "Right side after resize contains uninitialized black void");
 }
 
 } // namespace rtsa

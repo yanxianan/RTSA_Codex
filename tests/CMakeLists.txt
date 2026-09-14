@@ -149,7 +149,7 @@ target_link_libraries(rtsa_waterfall_tests PRIVATE
 add_test(NAME rtsa_waterfall_tests COMMAND rtsa_waterfall_tests)
 set_tests_properties(rtsa_waterfall_tests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    TIMEOUT 10
+    TIMEOUT 20
 )
 
 add_executable(rtsa_gui_tests

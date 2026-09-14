@@ -115,16 +115,73 @@ void WaterfallPlotWidget::resizeImageBuffer(const int width, const int height)
     newImage.setColorTable(colorTable_);
     newImage.fill(0);
 
-    if (!bufferImage_.isNull() && rowCount_ > 0) {
-        // Copy scanlines directly for Format_Indexed8 (cannot use QPainter on Indexed8 image)
+    if (!bufferImage_.isNull() && rowCount_ > 0 && bufferWidth_ > 0) {
         const int copyRows = std::min(rowCount_, newHeight);
-        for (int i = 0; i < copyRows; ++i) {
-            const int oldRow = (headRow_ + i) % bufferImage_.height();
-            const int newRow = (newHeight - copyRows + i) % newHeight;
-            const uchar* srcScan = bufferImage_.constScanLine(oldRow);
-            uchar* dstScan = newImage.scanLine(newRow);
-            const int copyCols = std::min(bufferWidth_, newWidth);
-            std::memcpy(dstScan, srcScan, static_cast<std::size_t>(copyCols));
+        if (bufferWidth_ == newWidth) {
+            for (int i = 0; i < copyRows; ++i) {
+                const int oldRow = (headRow_ + i) % bufferImage_.height();
+                const int newRow = (newHeight - copyRows + i) % newHeight;
+                const uchar* srcScan = bufferImage_.constScanLine(oldRow);
+                uchar* dstScan = newImage.scanLine(newRow);
+                std::memcpy(dstScan, srcScan, static_cast<std::size_t>(newWidth));
+            }
+        } else if (newWidth > bufferWidth_) {
+            // Upsampling (e.g. entering full screen): bilinear interpolation across width
+            struct InterpEntry {
+                int s0;
+                int s1;
+                int w0;
+                int w1;
+            };
+            std::vector<InterpEntry> xMap(newWidth);
+            for (int col = 0; col < newWidth; ++col) {
+                const double srcPos = (static_cast<double>(col) + 0.5) * bufferWidth_ / newWidth - 0.5;
+                const double clampedPos = std::clamp(srcPos, 0.0, static_cast<double>(bufferWidth_ - 1));
+                const int s0 = static_cast<int>(std::floor(clampedPos));
+                const int s1 = std::min(bufferWidth_ - 1, s0 + 1);
+                const int frac = static_cast<int>(std::round((clampedPos - s0) * 256.0));
+                xMap[col] = { s0, s1, 256 - frac, frac };
+            }
+
+            for (int i = 0; i < copyRows; ++i) {
+                const int oldRow = (headRow_ + i) % bufferImage_.height();
+                const int newRow = (newHeight - copyRows + i) % newHeight;
+                const uchar* srcScan = bufferImage_.constScanLine(oldRow);
+                uchar* dstScan = newImage.scanLine(newRow);
+                for (int col = 0; col < newWidth; ++col) {
+                    const auto& m = xMap[col];
+                    dstScan[col] = static_cast<uchar>((srcScan[m.s0] * m.w0 + srcScan[m.s1] * m.w1 + 128) >> 8);
+                }
+            }
+        } else {
+            // Downsampling (e.g. exiting full screen): peak-hold to preserve narrow signals
+            struct DownsampleRange {
+                int start;
+                int end;
+            };
+            std::vector<DownsampleRange> xMap(newWidth);
+            for (int col = 0; col < newWidth; ++col) {
+                const int start = std::clamp(col * bufferWidth_ / newWidth, 0, bufferWidth_ - 1);
+                const int end = std::clamp((col + 1) * bufferWidth_ / newWidth + 1, start + 1, bufferWidth_);
+                xMap[col] = { start, end };
+            }
+
+            for (int i = 0; i < copyRows; ++i) {
+                const int oldRow = (headRow_ + i) % bufferImage_.height();
+                const int newRow = (newHeight - copyRows + i) % newHeight;
+                const uchar* srcScan = bufferImage_.constScanLine(oldRow);
+                uchar* dstScan = newImage.scanLine(newRow);
+                for (int col = 0; col < newWidth; ++col) {
+                    const auto& range = xMap[col];
+                    uchar maxVal = srcScan[range.start];
+                    for (int s = range.start + 1; s < range.end; ++s) {
+                        if (srcScan[s] > maxVal) {
+                            maxVal = srcScan[s];
+                        }
+                    }
+                    dstScan[col] = maxVal;
+                }
+            }
         }
         headRow_ = (newHeight - copyRows) % newHeight;
         rowCount_ = copyRows;

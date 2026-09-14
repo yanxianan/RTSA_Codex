@@ -66,6 +66,7 @@ private:
     std::atomic<std::uint64_t> producedFrames_ { 0 };
     std::atomic<std::uint64_t> producedBytes_ { 0 };
     std::atomic<std::uint64_t> droppedFrames_ { 0 };
+    std::atomic<std::uint64_t> previewSequence_ { 0 };
     std::uint32_t configurationEpoch_ = 1;
     double activeTransientUntilSeconds_ = -1.0;
     double activeTransientFrequencyHz_ = 0.0;

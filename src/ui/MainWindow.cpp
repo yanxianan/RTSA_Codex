@@ -1,6 +1,7 @@
 #include "ui/MainWindow.h"
 
 #include "core/AmplitudeUnits.h"
+#include "core/FrequencyMapper.h"
 #include "core/SpectrumMeasurements.h"
 #include "plot/SpectrumPlotWidget.h"
 #include "plot/WaterfallPlotWidget.h"
@@ -25,6 +26,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -38,6 +40,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -126,6 +129,20 @@ QString formatFrequencyDelta(const double frequencyHz)
     return QStringLiteral("%1 Hz").arg(frequencyHz, 0, 'f', 1);
 }
 
+class NoHorizontalScrollArea final : public QScrollArea {
+public:
+    explicit NoHorizontalScrollArea(QWidget* parent = nullptr) : QScrollArea(parent) {
+        setWidgetResizable(true);
+        setFrameShape(QFrame::NoFrame);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        horizontalScrollBar()->setEnabled(false);
+    }
+protected:
+    void scrollContentsBy(int /*dx*/, int dy) override {
+        QScrollArea::scrollContentsBy(0, dy);
+    }
+};
+
 } // namespace
 
 MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
@@ -202,6 +219,33 @@ void MainWindow::changeEvent(QEvent* event)
     QMainWindow::changeEvent(event);
     if (event->type() == QEvent::WindowStateChange && fullScreenButton_) {
         fullScreenButton_->setText(isFullScreen() ? tr("退出全屏") : tr("进入全屏"));
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::MouseButtonPress) {
+        for (std::size_t i = 0; i < deltaCards_.size(); ++i) {
+            if (watched == deltaCards_[i] ||
+                watched == deltaCardTitleLabels_[i] ||
+                watched == deltaCardValueLabels_[i]) {
+                if (activeMarkerCombo_) {
+                    activeMarkerCombo_->setCurrentIndex(static_cast<int>(i + 1));
+                }
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::toggleAcquisition()
+{
+    const auto state = source_->state();
+    if (state == SourceState::Running || state == SourceState::Starting) {
+        stopAcquisition();
+    } else {
+        startAcquisition();
     }
 }
 
@@ -389,6 +433,7 @@ void MainWindow::configureSourceFromUi()
     if (simulationControl_) {
         simulationControl_->configure(configurationFromUi());
     }
+    refreshDisplay();
 }
 
 void MainWindow::applyTraceConfiguration()
@@ -644,6 +689,171 @@ void MainWindow::autoRangeAmplitude()
     applyAmplitudeScale();
 }
 
+void MainWindow::setQuickSpan(const double spanHz)
+{
+    const double clamped = std::clamp(spanHz,
+                                      spanSpin_->minimumFrequencyHz(),
+                                      spanSpin_->maximumFrequencyHz());
+    {
+        const QSignalBlocker blocker(spanSpin_);
+        spanSpin_->setFrequencyHz(clamped);
+    }
+    applySourceConfiguration();
+}
+
+void MainWindow::autoTune()
+{
+    double targetCenterHz = 0.0;
+    double targetSpanHz = 100.0e6;
+    float peakAmpDbfs = -20.0F;
+    double measuredBaseWidthHz = 0.0;
+    bool foundSignal = false;
+
+    if (simulationControl_) {
+        const auto config = simulationControl_->configuration();
+        float maxToneAmp = -1000.0F;
+        double maxToneFreq = 0.0;
+        double maxToneWidth = 0.0;
+
+        for (const auto& tone : config.tones) {
+            if (tone.enabled && tone.amplitudeDbfs > maxToneAmp) {
+                maxToneAmp = tone.amplitudeDbfs;
+                maxToneFreq = tone.frequencyHz;
+                maxToneWidth = tone.widthHz;
+                foundSignal = true;
+            }
+        }
+
+        if (!foundSignal && !config.tones.empty()) {
+            for (const auto& tone : config.tones) {
+                if (tone.amplitudeDbfs > maxToneAmp) {
+                    maxToneAmp = tone.amplitudeDbfs;
+                    maxToneFreq = tone.frequencyHz;
+                    maxToneWidth = tone.widthHz;
+                }
+            }
+            if (tone1EnabledCheck_) {
+                const QSignalBlocker blocker(tone1EnabledCheck_);
+                tone1EnabledCheck_->setChecked(true);
+            }
+            foundSignal = true;
+        }
+
+        if (config.sweepEnabled && config.sweepAmplitudeDbfs > maxToneAmp) {
+            maxToneAmp = config.sweepAmplitudeDbfs;
+            maxToneFreq = (config.sweepStartHz + config.sweepStopHz) * 0.5;
+            maxToneWidth = std::abs(config.sweepStopHz - config.sweepStartHz) / 12.0;
+            foundSignal = true;
+        }
+
+        if (foundSignal) {
+            targetCenterHz = maxToneFreq;
+            peakAmpDbfs = maxToneAmp;
+            if (maxToneWidth > 0.0) {
+                measuredBaseWidthHz = 12.0 * maxToneWidth;
+            }
+        }
+    }
+
+    // Inspect the actual spectrum frame to refine peak position and base width
+    const auto frame = pipeline_.latest();
+    if (frame && !frame->bins.empty()) {
+        const auto extrema = std::max_element(frame->bins.cbegin(), frame->bins.cend());
+        const std::size_t maxBin = static_cast<std::size_t>(
+            std::distance(frame->bins.cbegin(), extrema));
+        const float framePeakAmp = *extrema;
+
+        if (!foundSignal || framePeakAmp > peakAmpDbfs - 10.0F) {
+            const double binFreq = FrequencyMapper::frequencyForBin(frame->metadata, maxBin);
+            const double binRes = frame->metadata.spanHz / static_cast<double>(frame->bins.size());
+            const float noiseFloor = noiseFloorSpin_ ? static_cast<float>(noiseFloorSpin_->value()) : -110.0F;
+            const float threshold = std::max(noiseFloor + 3.0F, framePeakAmp - 50.0F);
+
+            // Search left for base boundary
+            std::size_t leftBin = maxBin;
+            while (leftBin > 0 && frame->bins[leftBin] > threshold) {
+                if (leftBin + 1 < frame->bins.size() && leftBin > 1
+                    && frame->bins[leftBin] < framePeakAmp - 20.0F
+                    && frame->bins[leftBin] < frame->bins[leftBin - 1]
+                    && frame->bins[leftBin] < frame->bins[leftBin + 1]) {
+                    break;
+                }
+                --leftBin;
+            }
+
+            // Search right for base boundary
+            std::size_t rightBin = maxBin;
+            while (rightBin + 1 < frame->bins.size() && frame->bins[rightBin] > threshold) {
+                if (rightBin > 0 && rightBin + 2 < frame->bins.size()
+                    && frame->bins[rightBin] < framePeakAmp - 20.0F
+                    && frame->bins[rightBin] < frame->bins[rightBin + 1]
+                    && frame->bins[rightBin] < frame->bins[rightBin - 1]) {
+                    break;
+                }
+                ++rightBin;
+            }
+
+            const double frameBaseWidth = std::max(2.0 * binRes, static_cast<double>(rightBin - leftBin) * binRes);
+
+            if (!foundSignal) {
+                targetCenterHz = binFreq;
+                peakAmpDbfs = framePeakAmp;
+                measuredBaseWidthHz = frameBaseWidth;
+                foundSignal = true;
+            } else if (measuredBaseWidthHz <= 0.0) {
+                measuredBaseWidthHz = frameBaseWidth;
+            }
+        }
+    }
+
+    if (!foundSignal) {
+        targetCenterHz = fullRangeCenterHz_ > 0.0 ? fullRangeCenterHz_ : 1000.0e6;
+        measuredBaseWidthHz = 40.0e6;
+        peakAmpDbfs = -10.0F;
+    }
+
+    // Scale the peak signal so its full base width occupies exactly ~2 divisions (20% of the 10-div screen)
+    const double effectiveBaseWidth = std::max(2.0e6, measuredBaseWidthHz);
+    targetSpanHz = std::clamp(effectiveBaseWidth * 5.0,
+                              spanSpin_->minimumFrequencyHz(),
+                              spanSpin_->maximumFrequencyHz());
+
+    {
+        const QSignalBlocker centerBlocker(centerFrequencySpin_);
+        const QSignalBlocker spanBlocker(spanSpin_);
+        centerFrequencySpin_->setFrequencyHz(targetCenterHz);
+        spanSpin_->setFrequencyHz(targetSpanHz);
+    }
+    synchronizeStartStopFromCenterSpan();
+
+    // Amplitude scaling:
+    // Peak is ~1 division from top; noise floor is ~1 division from bottom
+    const double noiseFloor = noiseFloorSpin_ ? noiseFloorSpin_->value() : -110.0;
+    const double peakToNoise = std::max(20.0, static_cast<double>(peakAmpDbfs) - noiseFloor);
+    const double scale = std::clamp(std::ceil((peakToNoise / 8.0) / 2.0) * 2.0, 5.0, 25.0);
+    const double refLevel = std::ceil((static_cast<double>(peakAmpDbfs) + scale) / 10.0) * 10.0;
+    const double bottomLevel = refLevel - 10.0 * scale;
+
+    {
+        const QSignalBlocker refBlocker(referenceLevelSpin_);
+        const QSignalBlocker bottomBlocker(bottomLevelSpin_);
+        const QSignalBlocker scaleBlocker(verticalScaleSpin_);
+        referenceLevelSpin_->setValue(std::clamp(refLevel, referenceLevelSpin_->minimum(), referenceLevelSpin_->maximum()));
+        bottomLevelSpin_->setValue(std::clamp(bottomLevel, bottomLevelSpin_->minimum(), bottomLevelSpin_->maximum()));
+        verticalScaleSpin_->setValue(scale);
+    }
+    applyAmplitudeScale();
+    applySourceConfiguration();
+
+    if (plot_) {
+        plot_->setMarkerEnabled(0, true);
+        plot_->setMarkerFrequency(0, targetCenterHz);
+        plot_->setActiveMarker(0);
+        refreshMarkerLabels();
+    }
+    refreshDisplay();
+}
+
 void MainWindow::markerToCenter()
 {
     if (!plot_ || !centerFrequencySpin_) {
@@ -732,34 +942,47 @@ void MainWindow::refreshMarkerLabels()
         }
     }
 
+    // 更新活动卡片外框发光主题色
+    auto* activeCard = findChild<QFrame*>(QStringLiteral("activeMarkerCard"));
+    if (activeCard) {
+        activeCard->setStyleSheet(QStringLiteral(
+            "QFrame#activeMarkerCard {"
+            "  background-color: #071018;"
+            "  border: 1.5px solid %1;"
+            "  border-radius: 6px;"
+            "  padding: 6px 10px;"
+            "}"
+        ).arg(markerColors[active].name()));
+    }
+
     // 2. 更新活动标记读数主卡片 (Active Marker Card)
     const MarkerMeasurement activeMeasure = plot_->markerMeasurement(active);
     if (activeMeasure.valid) {
-        const QString targetText = tr("M%1:  %2  |  %3 %4%5")
+        const QString targetText = tr("● M%1 频率: %2\n   幅度: %3 %4%5")
             .arg(active + 1U)
             .arg(formatFrequency(activeMeasure.frequencyHz))
             .arg(activeMeasure.amplitude, 0, 'f', 2)
             .arg(unit)
-            .arg(frame && frame->metadata.calibrated ? QString() : tr("（未校准）"));
+            .arg(frame && frame->metadata.calibrated ? QString() : tr(" (未校准)"));
         if (markerLabel_->text() != targetText) {
             markerLabel_->setText(targetText);
         }
-        const QString targetStyle = QStringLiteral("color: %1; font-weight: bold;").arg(markerColors[active].name());
+        const QString targetStyle = QStringLiteral("color: %1; font-weight: bold; line-height: 140%;").arg(markerColors[active].name());
         if (markerLabel_->styleSheet() != targetStyle) {
             markerLabel_->setStyleSheet(targetStyle);
         }
     } else {
-        const QString targetText = tr("M%1 未启用 (点击启用或点击搜索峰值)").arg(active + 1U);
+        const QString targetText = tr("○ M%1 未启用\n(点击上方启用或搜索峰值)").arg(active + 1U);
         if (markerLabel_->text() != targetText) {
             markerLabel_->setText(targetText);
         }
-        const QString targetStyle = QStringLiteral("color: #8899A6; font-weight: normal;");
+        const QString targetStyle = QStringLiteral("color: #78909C; font-weight: normal;");
         if (markerLabel_->styleSheet() != targetStyle) {
             markerLabel_->setStyleSheet(targetStyle);
         }
     }
 
-    // 3. 自动计算活动标记的 Delta 差分值 (无需配置，默认自动计算)
+    // 3. 自动计算活动标记的 Delta 差分值
     QString deltaTargetText;
     if (active == 0U) {
         bool hasOther = false;
@@ -768,7 +991,7 @@ void MainWindow::refreshMarkerLabels()
                 const auto d = plot_->deltaMarkerMeasurement(i, 0U);
                 if (d.valid) {
                     const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
-                    deltaTargetText = tr("M1 [基准] | 与 M%1 差: ΔF = %2, ΔA = %3%4 %5")
+                    deltaTargetText = tr("M1 [基准] | M%1 差分: ΔF = %2, ΔA = %3%4 %5")
                         .arg(i + 1U)
                         .arg(formatFrequencyDelta(d.frequencyDeltaHz))
                         .arg(signA)
@@ -793,7 +1016,7 @@ void MainWindow::refreshMarkerLabels()
                 .arg(d.amplitudeDelta, 0, 'f', 2)
                 .arg(unit);
         } else if (isActEnabled && !plot_->isMarkerEnabled(0U)) {
-            deltaTargetText = tr("Δ(M%1): 未设基准 (需启用M1)").arg(active + 1U);
+            deltaTargetText = tr("Δ(M%1): 缺失基准 (需启用 M1)").arg(active + 1U);
         } else {
             deltaTargetText = tr("Δ 差分: ---");
         }
@@ -848,9 +1071,65 @@ void MainWindow::refreshMarkerLabels()
             updateItemText(itemM, QStringLiteral("○ M%1").arg(i + 1U));
         }
 
-        const QColor rowBg = isRowActive ? QColor(0, 166, 255, 45) : QColor(0, 0, 0, 0);
+        const QColor rowBg = isRowActive ? QColor(0, 229, 255, 36) : QColor(0, 0, 0, 0);
         for (int col = 0; col < 4; ++col) {
             updateItemBg(markerTable_->item(static_cast<int>(i), col), rowBg);
+        }
+    }
+
+    // 5. 更新全标记多路差分卡片看板 (Delta Cards M2~M4 vs M1)
+    const bool m1Enabled = plot_->isMarkerEnabled(0U);
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (!deltaCards_[i] || !deltaCardTitleLabels_[i] || !deltaCardValueLabels_[i]) {
+            continue;
+        }
+        const std::size_t markerIdx = i + 1U;
+        const bool mEnabled = plot_->isMarkerEnabled(markerIdx);
+        const bool isCardActive = (markerIdx == active);
+
+        const QString activeBorder = isCardActive
+            ? QStringLiteral("border: 1.5px solid %1; background-color: #0E2233;").arg(markerColors[markerIdx].name())
+            : QStringLiteral("border: 1px solid #1E3347; background-color: #0A141E;");
+        deltaCards_[i]->setStyleSheet(QStringLiteral(
+            "QFrame {"
+            "  %1"
+            "  border-radius: 5px;"
+            "  padding: 4px 8px;"
+            "}"
+            "QFrame:hover {"
+            "  background-color: #12283D;"
+            "  border: 1px solid %2;"
+            "}"
+        ).arg(activeBorder, markerColors[markerIdx].name()));
+
+        if (mEnabled && m1Enabled) {
+            const auto d = plot_->deltaMarkerMeasurement(markerIdx, 0U);
+            if (d.valid) {
+                const QString signA = d.amplitudeDelta >= 0 ? QStringLiteral("+") : QString();
+                deltaCardTitleLabels_[i]->setText(
+                    QStringLiteral("● M%1 - M1 (%2)").arg(markerIdx + 1U).arg(isCardActive ? tr("当前活动") : tr("有效")));
+                deltaCardValueLabels_[i]->setText(
+                    QStringLiteral("ΔF: %1\nΔA: %2%3 dB")
+                        .arg(formatFrequencyDelta(d.frequencyDeltaHz))
+                        .arg(signA)
+                        .arg(d.amplitudeDelta, 0, 'f', 2));
+                deltaCardValueLabels_[i]->setStyleSheet(QStringLiteral("color: #FFFFFF; font-weight: bold;"));
+                continue;
+            }
+        }
+
+        if (!m1Enabled && mEnabled) {
+            deltaCardTitleLabels_[i]->setText(QStringLiteral("○ M%1 - M1 (缺失基准)").arg(markerIdx + 1U));
+            deltaCardValueLabels_[i]->setText(tr("需启用 M1 作为参考基准"));
+            deltaCardValueLabels_[i]->setStyleSheet(QStringLiteral("color: #E57373;"));
+        } else if (!mEnabled) {
+            deltaCardTitleLabels_[i]->setText(QStringLiteral("○ M%1 - M1 (未启用)").arg(markerIdx + 1U));
+            deltaCardValueLabels_[i]->setText(tr("点击启用 M%1 测量相对差分").arg(markerIdx + 1U));
+            deltaCardValueLabels_[i]->setStyleSheet(QStringLiteral("color: #607D8B;"));
+        } else {
+            deltaCardTitleLabels_[i]->setText(QStringLiteral("○ M%1 - M1").arg(markerIdx + 1U));
+            deltaCardValueLabels_[i]->setText(QStringLiteral("--"));
+            deltaCardValueLabels_[i]->setStyleSheet(QStringLiteral("color: #607D8B;"));
         }
     }
 }
@@ -1031,12 +1310,10 @@ void MainWindow::showShortcutsDialog()
     box.setText(tr(
         "<h3>⌨️ RTSA 快捷键参考</h3>"
         "<table border='0' cellpadding='4' cellspacing='0' style='font-size: 12px; color: #cfd8dc;'>"
-        "<tr><td><b>F5</b></td><td>开始 / 继续连续采集</td></tr>"
-        "<tr><td><b>F6</b></td><td>暂停采集</td></tr>"
+        "<tr><td><b>F5</b></td><td>自动设置 (Auto Set)</td></tr>"
+        "<tr><td><b>空格键 (Space)</b></td><td>开始 / 停止采集切换</td></tr>"
         "<tr><td><b>F7</b></td><td>单次扫描采集</td></tr>"
-        "<tr><td><b>F8</b></td><td>停止采集</td></tr>"
         "<tr><td><b>F11</b></td><td>全屏模式切换 (ESC 退出)</td></tr>"
-        "<tr><td><b>Ctrl + R</b></td><td>自动幅度刻度 (Auto Range)</td></tr>"
         "<tr><td><b>Ctrl + G</b></td><td>显示 / 隐藏网格 (Toggle Grid)</td></tr>"
         "<tr><td><b>Ctrl + 0</b></td><td>重置频率范围 (Reset Span)</td></tr>"
         "<tr><td><b>M</b></td><td>活动标记峰值搜索 (Peak Search)</td></tr>"
@@ -1278,8 +1555,8 @@ void MainWindow::buildMenuBar()
 
     displayMenu->addSeparator();
 
-    // 2.7 自动量程与全屏
-    displayMenu->addAction(tr("自动幅度刻度 (&Auto Range)"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::autoRangeAmplitude);
+    // 2.7 自动设置与全屏
+    displayMenu->addAction(tr("自动设置 (&Auto Set)"), QKeySequence(Qt::Key_F5), this, &MainWindow::autoTune);
     displayMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
 
     // 3. Help Menu
@@ -1346,16 +1623,16 @@ QWidget* MainWindow::buildControlPanel()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
 
-    // 1. Top Instrument Acquisition Control Bar (Styled exactly per screenshot)
+    // 1. Top Instrument Acquisition Control Bar (Unified Start/Stop Toggle & Single)
     auto* acqBox = new QGroupBox(tr("采集控制"), panel);
     auto* acqLayout = new QGridLayout(acqBox);
     acqLayout->setContentsMargins(6, 8, 6, 6);
     acqLayout->setSpacing(6);
 
-    startButton_ = new QPushButton(tr("▶  开始 / 连续"), acqBox);
-    startButton_->setObjectName(QStringLiteral("startButton"));
-    startButton_->setMinimumHeight(38);
-    startButton_->setStyleSheet(QStringLiteral(
+    startStopButton_ = new QPushButton(tr("▶  开始 / 连续"), acqBox);
+    startStopButton_->setObjectName(QStringLiteral("startStopButton"));
+    startStopButton_->setMinimumHeight(38);
+    startStopButton_->setStyleSheet(QStringLiteral(
         "QPushButton { "
         "  font-size: 13px; font-weight: bold; color: #00e676; "
         "  background-color: #0d2315; border: 1.5px solid #00e676; "
@@ -1365,39 +1642,21 @@ QWidget* MainWindow::buildControlPanel()
         "QPushButton:pressed { background-color: #1f4f30; } "
         "QPushButton:disabled { color: #5a7364; border-color: #2e4737; background-color: #121c15; }"));
 
-    stopButton_ = new QPushButton(tr("■  停止"), acqBox);
-    stopButton_->setObjectName(QStringLiteral("stopButton"));
-    stopButton_->setMinimumHeight(32);
-    stopButton_->setStyleSheet(QStringLiteral(
-        "QPushButton { "
-        "  font-size: 12px; font-weight: bold; color: #cfd8dc; "
-        "  background-color: #1e2631; border: 1px solid #37474f; "
-        "  border-radius: 3px; padding: 4px 8px; "
-        "} "
-        "QPushButton:hover { background-color: #2b3644; border-color: #546e7a; color: #eceff1; } "
-        "QPushButton:pressed { background-color: #161c24; } "
-        "QPushButton:disabled { color: #607d8b; border-color: #263238; background-color: #161c22; }"));
-
     singleButton_ = new QPushButton(tr("○  单次"), acqBox);
     singleButton_->setObjectName(QStringLiteral("singleButton"));
-    singleButton_->setMinimumHeight(32);
+    singleButton_->setMinimumHeight(38);
     singleButton_->setStyleSheet(QStringLiteral(
         "QPushButton { "
         "  font-size: 12px; font-weight: bold; color: #cfd8dc; "
-        "  background-color: #1e2631; border: 1px solid #37474f; "
-        "  border-radius: 3px; padding: 4px 8px; "
+        "  background-color: #1e2631; border: 1.5px solid #37474f; "
+        "  border-radius: 3px; padding: 6px 12px; "
         "} "
         "QPushButton:hover { background-color: #2b3644; border-color: #546e7a; color: #eceff1; } "
         "QPushButton:pressed { background-color: #161c24; } "
         "QPushButton:disabled { color: #607d8b; border-color: #263238; background-color: #161c22; }"));
 
-    pauseButton_ = new QPushButton(tr("❚❚ 暂停"), acqBox);
-    pauseButton_->setObjectName(QStringLiteral("pauseButton"));
-    pauseButton_->setVisible(false);
-
-    acqLayout->addWidget(startButton_, 0, 0, 1, 2);
-    acqLayout->addWidget(stopButton_, 1, 0);
-    acqLayout->addWidget(singleButton_, 1, 1);
+    acqLayout->addWidget(startStopButton_, 0, 0);
+    acqLayout->addWidget(singleButton_, 0, 1);
     layout->addWidget(acqBox);
 
     // 2. Tab Widget with 4 Clean Functional Pages
@@ -1455,6 +1714,8 @@ QWidget* MainWindow::buildControlPanel()
 
     // Tab 4: 标记 (Markers)
     auto* markerPage = new QWidget;
+    markerPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    markerPage->setMinimumWidth(0);
     auto* markerLayout = new QVBoxLayout(markerPage);
     markerLayout->setContentsMargins(2, 4, 2, 4);
     markerLayout->setSpacing(6);
@@ -1462,10 +1723,7 @@ QWidget* MainWindow::buildControlPanel()
     markerLayout->addWidget(buildMarkerTableGroup());
     markerLayout->addStretch(1);
 
-    auto* markerScroll = new QScrollArea;
-    markerScroll->setWidgetResizable(true);
-    markerScroll->setFrameShape(QFrame::NoFrame);
-    markerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* markerScroll = new NoHorizontalScrollArea(mainTabWidget_);
     markerScroll->setWidget(markerPage);
     mainTabWidget_->addTab(markerScroll, tr("标记"));
 
@@ -1539,8 +1797,49 @@ QWidget* MainWindow::buildSourceGroup()
     noiseFloorSpin_->setValue(-110.0);
     noiseFloorSpin_->setSuffix(tr(" dBFS"));
 
+    // Quick Span Preset Buttons Grid
+    auto* quickSpanWidget = new QWidget(group);
+    auto* quickSpanLayout = new QGridLayout(quickSpanWidget);
+    quickSpanLayout->setContentsMargins(0, 2, 0, 2);
+    quickSpanLayout->setSpacing(4);
+
+    const struct QuickSpanEntry {
+        QString label;
+        double spanHz;
+    } quickSpans[] = {
+        { QStringLiteral("10M"), 10.0e6 },
+        { QStringLiteral("20M"), 20.0e6 },
+        { QStringLiteral("50M"), 50.0e6 },
+        { QStringLiteral("100M"), 100.0e6 },
+        { QStringLiteral("200M"), 200.0e6 },
+        { QStringLiteral("500M"), 500.0e6 },
+        { QStringLiteral("1.0G"), 1000.0e6 },
+        { QStringLiteral("全频宽"), 0.0 }
+    };
+
+    int spanCol = 0;
+    int spanRow = 0;
+    for (const auto& qs : quickSpans) {
+        auto* btn = new QPushButton(qs.label, quickSpanWidget);
+        btn->setMinimumHeight(24);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton { font-size: 11px; font-weight: bold; padding: 2px 4px; background-color: #1e2631; color: #b0bec5; border: 1px solid #37474f; border-radius: 3px; } "
+            "QPushButton:hover { background-color: #2b3644; color: #00e5ff; border-color: #00e5ff; } "
+            "QPushButton:pressed { background-color: #161c24; }"));
+        const double targetSpan = qs.spanHz;
+        connect(btn, &QPushButton::clicked, this, [this, targetSpan] {
+            setQuickSpan(targetSpan <= 0.0 ? fullRangeSpanHz_ : targetSpan);
+        });
+        quickSpanLayout->addWidget(btn, spanRow, spanCol);
+        if (++spanCol >= 4) {
+            spanCol = 0;
+            ++spanRow;
+        }
+    }
+
     form->addRow(tr("中心频率"), centerFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("频宽（Span）"), spanSpin_->createCompoundWidget(group));
+    form->addRow(tr("常用频宽"), quickSpanWidget);
     form->addRow(tr("起始频率"), startFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("终止频率"), stopFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("频点数"), fftSizeCombo_);
@@ -1574,15 +1873,25 @@ QWidget* MainWindow::buildDisplayGroup()
     verticalScaleSpin_->setValue(14.0);
     verticalScaleSpin_->setSuffix(tr(" dB/格"));
 
-    autoRangeButton_ = new QPushButton(tr("自动量程 (Ctrl+R)"), group);
-    autoRangeButton_->setObjectName(QStringLiteral("autoRangeButton"));
-    fullScreenButton_ = new QPushButton(tr("进入全屏 (F11)"), group);
+    autoTuneButton_ = new QPushButton(tr("自动设置 (Auto Set / F5)"), group);
+    autoTuneButton_->setObjectName(QStringLiteral("autoTuneButton"));
+    autoTuneButton_->setMinimumHeight(34);
+    autoTuneButton_->setStyleSheet(QStringLiteral(
+        "QPushButton { "
+        "  font-size: 12px; font-weight: bold; color: #00e5ff; "
+        "  background-color: #0b2533; border: 1.5px solid #00e5ff; "
+        "  border-radius: 3px; padding: 5px 10px; "
+        "} "
+        "QPushButton:hover { background-color: #12384d; border-color: #80d8ff; color: #80d8ff; } "
+        "QPushButton:pressed { background-color: #1a4d69; }"));
+
+    fullScreenButton_ = new QPushButton(tr("⛶ 进入全屏 (F11)"), group);
     fullScreenButton_->setObjectName(QStringLiteral("fullScreenButton"));
 
     form->addRow(tr("参考电平"), referenceLevelSpin_);
     form->addRow(tr("底部电平"), bottomLevelSpin_);
     form->addRow(tr("垂直刻度"), verticalScaleSpin_);
-    form->addRow(autoRangeButton_);
+    form->addRow(autoTuneButton_);
     form->addRow(fullScreenButton_);
     return group;
 }
@@ -1771,6 +2080,7 @@ QWidget* MainWindow::buildMarkerGroup()
     auto* markerSelectRow = new QWidget(group);
     auto* markerSelectLayout = new QHBoxLayout(markerSelectRow);
     markerSelectLayout->setContentsMargins(0, 0, 0, 0);
+    markerSelectLayout->setSpacing(8);
 
     activeMarkerCombo_ = new QComboBox(markerSelectRow);
     activeMarkerCombo_->setObjectName(QStringLiteral("activeMarker"));
@@ -1778,12 +2088,15 @@ QWidget* MainWindow::buildMarkerGroup()
         activeMarkerCombo_->addItem(QStringLiteral("M%1").arg(index + 1U),
                                     static_cast<int>(index));
     }
+    activeMarkerCombo_->setFixedWidth(80);
+
     markerEnabledCheck_ = new QCheckBox(tr("启用 M1"), markerSelectRow);
     markerEnabledCheck_->setObjectName(QStringLiteral("markerEnabled"));
     markerEnabledCheck_->setChecked(false);
+    markerEnabledCheck_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-    markerSelectLayout->addWidget(activeMarkerCombo_, 1);
-    markerSelectLayout->addWidget(markerEnabledCheck_, 1);
+    markerSelectLayout->addWidget(activeMarkerCombo_);
+    markerSelectLayout->addWidget(markerEnabledCheck_);
 
     markerFrequencySpin_ = new FrequencySpinBox(group);
     markerFrequencySpin_->setObjectName(QStringLiteral("markerFrequencyMHz"));
@@ -1808,11 +2121,12 @@ QWidget* MainWindow::buildMarkerGroup()
     auto* peakButtons = new QWidget(group);
     auto* peakLayout = new QHBoxLayout(peakButtons);
     peakLayout->setContentsMargins(0, 0, 0, 0);
+    peakLayout->setSpacing(4);
     peakLayout->addWidget(previousPeakButton_);
     peakLayout->addWidget(peakButton_);
     peakLayout->addWidget(nextPeakButton_);
 
-    markerToCenterButton_ = new QPushButton(tr("设为中心频率 (M->CF)"), group);
+    markerToCenterButton_ = new QPushButton(tr("设为中心 (M->CF)"), group);
     markerToCenterButton_->setObjectName(QStringLiteral("markerToCenterButton"));
     clearMarkerButton_ = new QPushButton(tr("清除当前"), group);
     clearMarkerButton_->setObjectName(QStringLiteral("clearMarkerButton"));
@@ -1822,6 +2136,7 @@ QWidget* MainWindow::buildMarkerGroup()
     auto* actionButtons = new QWidget(group);
     auto* actionLayout = new QHBoxLayout(actionButtons);
     actionLayout->setContentsMargins(0, 0, 0, 0);
+    actionLayout->setSpacing(4);
     actionLayout->addWidget(markerToCenterButton_);
     actionLayout->addWidget(clearMarkerButton_);
     actionLayout->addWidget(clearAllMarkersButton_);
@@ -1839,7 +2154,8 @@ QWidget* MainWindow::buildMarkerTableGroup()
 {
     auto* group = new QGroupBox(tr("标记参数与读数 (Marker Readouts)"), this);
     auto* vbox = new QVBoxLayout(group);
-    vbox->setSpacing(8);
+    vbox->setSpacing(10);
+    vbox->setContentsMargins(8, 12, 8, 10);
 
     // 1. 活动标记主读数卡片 (Active Marker Card)
     auto* activeCard = new QFrame(group);
@@ -1847,31 +2163,36 @@ QWidget* MainWindow::buildMarkerTableGroup()
     activeCard->setStyleSheet(QStringLiteral(
         "QFrame#activeMarkerCard {"
         "  background-color: #071018;"
-        "  border: 1px solid #1A3045;"
-        "  border-radius: 4px;"
-        "  padding: 4px 8px;"
+        "  border: 1.5px solid #FFD54F;"
+        "  border-radius: 6px;"
+        "  padding: 6px 10px;"
         "}"
     ));
     auto* cardLayout = new QVBoxLayout(activeCard);
-    cardLayout->setContentsMargins(6, 6, 6, 6);
-    cardLayout->setSpacing(2);
+    cardLayout->setContentsMargins(4, 4, 4, 4);
+    cardLayout->setSpacing(6);
 
-    markerLabel_ = new QLabel(tr("M1 未启用"), activeCard);
+    markerLabel_ = new QLabel(tr("○ M1 未启用\n(点击上方启用或搜索峰值)"), activeCard);
     markerLabel_->setObjectName(QStringLiteral("markerLabel"));
-    markerLabel_->setWordWrap(false);
+    markerLabel_->setWordWrap(true);
+    markerLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     QFont monoFont(QStringLiteral("Consolas, Courier New, monospace"));
-    monoFont.setPointSize(10);
+    monoFont.setPointSize(11);
     monoFont.setBold(true);
     markerLabel_->setFont(monoFont);
-    markerLabel_->setStyleSheet(QStringLiteral("color: #FFD54F;"));
+    markerLabel_->setStyleSheet(QStringLiteral("color: #78909C; line-height: 140%;"));
 
     activeMarkerDeltaLabel_ = new QLabel(tr("Δ 差分: ---"), activeCard);
     activeMarkerDeltaLabel_->setObjectName(QStringLiteral("activeMarkerDeltaLabel"));
-    activeMarkerDeltaLabel_->setWordWrap(false);
+    activeMarkerDeltaLabel_->setWordWrap(true);
+    activeMarkerDeltaLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     QFont deltaFont(QStringLiteral("Consolas, Courier New, monospace"));
-    deltaFont.setPointSize(9);
+    deltaFont.setPointSize(10);
+    deltaFont.setBold(true);
     activeMarkerDeltaLabel_->setFont(deltaFont);
-    activeMarkerDeltaLabel_->setStyleSheet(QStringLiteral("color: #80D8FF;"));
+    activeMarkerDeltaLabel_->setStyleSheet(QStringLiteral(
+        "color: #80D8FF; background-color: #0D1E2D; border: 1px solid #1A3E5C; border-radius: 4px; padding: 4px 6px;"
+    ));
 
     cardLayout->addWidget(markerLabel_);
     cardLayout->addWidget(activeMarkerDeltaLabel_);
@@ -1886,22 +2207,36 @@ QWidget* MainWindow::buildMarkerTableGroup()
     markerTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     markerTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     markerTable_->setShowGrid(true);
-    markerTable_->horizontalHeader()->setStretchLastSection(true);
-    markerTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    markerTable_->setColumnWidth(0, 52);
-    markerTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    markerTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-    markerTable_->setColumnWidth(2, 78);
-    markerTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
-    markerTable_->setFixedHeight(126);
+    markerTable_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    markerTable_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    markerTable_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    const QStringList markerNames = { QStringLiteral("● M1"), QStringLiteral("● M2"), QStringLiteral("● M3"), QStringLiteral("● M4") };
-    const QColor markerColors[] = { QColor(255, 213, 79), QColor(0, 229, 255), QColor(255, 64, 129), QColor(0, 230, 118) };
+    markerTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+    markerTable_->setColumnWidth(0, 62);
+    markerTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
+    markerTable_->setColumnWidth(1, 102);
+    markerTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
+    markerTable_->setColumnWidth(2, 72);
+    markerTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    markerTable_->setFixedHeight(156);
+
+    const QStringList markerNames = {
+        QStringLiteral("● M1 [Ref]"),
+        QStringLiteral("● M2"),
+        QStringLiteral("● M3"),
+        QStringLiteral("● M4")
+    };
+    const QColor markerColors[] = {
+        QColor(255, 213, 79),
+        QColor(0, 229, 255),
+        QColor(255, 64, 129),
+        QColor(0, 230, 118)
+    };
 
     for (int row = 0; row < 4; ++row) {
         auto* itemM = new QTableWidgetItem(markerNames[row]);
         itemM->setForeground(markerColors[row]);
-        itemM->setTextAlignment(Qt::AlignCenter);
+        itemM->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
         auto* itemF = new QTableWidgetItem(QStringLiteral("--"));
         itemF->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -1916,7 +2251,7 @@ QWidget* MainWindow::buildMarkerTableGroup()
         markerTable_->setItem(row, 1, itemF);
         markerTable_->setItem(row, 2, itemA);
         markerTable_->setItem(row, 3, itemD);
-        markerTable_->setRowHeight(row, 24);
+        markerTable_->setRowHeight(row, 29);
     }
 
     connect(markerTable_, &QTableWidget::cellClicked, this, [this](int row, int) {
@@ -1926,6 +2261,66 @@ QWidget* MainWindow::buildMarkerTableGroup()
     });
 
     vbox->addWidget(markerTable_);
+
+    // 3. 全标记多路差分卡片看板 (Delta Details Deck - 充分利用下方空闲空间)
+    auto* deltaDeckHeader = new QLabel(tr("差分测量速览看板 (Delta vs M1):"), group);
+    deltaDeckHeader->setStyleSheet(QStringLiteral("font-size: 11px; font-weight: bold; color: #90A4AE; margin-top: 4px;"));
+    vbox->addWidget(deltaDeckHeader);
+
+    const QColor deltaColors[] = {
+        QColor(0, 229, 255),  // M2
+        QColor(255, 64, 129), // M3
+        QColor(0, 230, 118)   // M4
+    };
+
+    for (std::size_t i = 0; i < 3; ++i) {
+        auto* card = new QFrame(group);
+        card->setObjectName(QStringLiteral("deltaCard_%1").arg(i + 2));
+        card->setCursor(Qt::PointingHandCursor);
+        card->setToolTip(tr("点击直接切换活动标记至 M%1").arg(i + 2));
+        card->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        card->setStyleSheet(QStringLiteral(
+            "QFrame {"
+            "  background-color: #0A141E;"
+            "  border: 1px solid #1E3347;"
+            "  border-radius: 5px;"
+            "  padding: 4px 8px;"
+            "}"
+            "QFrame:hover {"
+            "  background-color: #0F1E2C;"
+            "  border: 1px solid %1;"
+            "}"
+        ).arg(deltaColors[i].name()));
+
+        auto* cLayout = new QVBoxLayout(card);
+        cLayout->setContentsMargins(6, 4, 6, 4);
+        cLayout->setSpacing(2);
+
+        auto* tLabel = new QLabel(QStringLiteral("○ M%1 - M1 (待启用)").arg(i + 2), card);
+        tLabel->setFont(QFont(QStringLiteral("Consolas, Courier New, monospace"), 9, QFont::Bold));
+        tLabel->setStyleSheet(QStringLiteral("color: %1;").arg(deltaColors[i].name()));
+        tLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+
+        auto* vLabel = new QLabel(tr("启用 M%1 后自动测量差分").arg(i + 2), card);
+        vLabel->setFont(QFont(QStringLiteral("Consolas, Courier New, monospace"), 9));
+        vLabel->setStyleSheet(QStringLiteral("color: #78909C;"));
+        vLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        vLabel->setWordWrap(true);
+
+        cLayout->addWidget(tLabel);
+        cLayout->addWidget(vLabel);
+
+        card->installEventFilter(this);
+        tLabel->installEventFilter(this);
+        vLabel->installEventFilter(this);
+
+        deltaCards_[i] = card;
+        deltaCardTitleLabels_[i] = tLabel;
+        deltaCardValueLabels_[i] = vLabel;
+
+        vbox->addWidget(card);
+    }
+
     return group;
 }
 
@@ -2000,12 +2395,12 @@ QWidget* MainWindow::buildTelemetryGroup()
 
 void MainWindow::connectUi()
 {
-    connect(startButton_, &QPushButton::clicked, this, &MainWindow::startAcquisition);
-    connect(pauseButton_, &QPushButton::clicked, this, &MainWindow::pauseAcquisition);
-    connect(stopButton_, &QPushButton::clicked, this, &MainWindow::stopAcquisition);
+    connect(startStopButton_, &QPushButton::clicked, this, &MainWindow::toggleAcquisition);
     connect(singleButton_, &QPushButton::clicked, this, &MainWindow::singleAcquisition);
+    if (autoTuneButton_) {
+        connect(autoTuneButton_, &QPushButton::clicked, this, &MainWindow::autoTune);
+    }
     connect(fullScreenButton_, &QPushButton::clicked, this, &MainWindow::toggleFullScreen);
-    connect(autoRangeButton_, &QPushButton::clicked, this, &MainWindow::autoRangeAmplitude);
     connect(screenshotButton_, &QPushButton::clicked, this, &MainWindow::saveScreenshot);
     connect(exportCsvButton_, &QPushButton::clicked, this, &MainWindow::exportCsv);
     if (saveScenarioButton_) {
@@ -2350,14 +2745,38 @@ void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
 
 void MainWindow::updateButtonStates(const SourceState state)
 {
-    const bool startable = state == SourceState::Initialized
-        || state == SourceState::Stopped || state == SourceState::Error;
     const bool running = state == SourceState::Running || state == SourceState::Starting;
-    const bool paused = state == SourceState::Paused;
-    startButton_->setEnabled(startable || paused);
-    pauseButton_->setEnabled(running);
-    stopButton_->setEnabled(running || paused);
-    singleButton_->setEnabled(startable || paused);
+
+    if (startStopButton_) {
+        startStopButton_->setEnabled(true);
+        if (running) {
+            startStopButton_->setText(tr("■  停止"));
+            startStopButton_->setStyleSheet(QStringLiteral(
+                "QPushButton { "
+                "  font-size: 13px; font-weight: bold; color: #ff5252; "
+                "  background-color: #2d1515; border: 1.5px solid #ff5252; "
+                "  border-radius: 3px; padding: 6px 12px; "
+                "} "
+                "QPushButton:hover { background-color: #421d1d; border-color: #ff8a80; color: #ff8a80; } "
+                "QPushButton:pressed { background-color: #572222; } "
+                "QPushButton:disabled { color: #785a5a; border-color: #422828; background-color: #1e1313; }"));
+        } else {
+            startStopButton_->setText(tr("▶  开始 / 连续"));
+            startStopButton_->setStyleSheet(QStringLiteral(
+                "QPushButton { "
+                "  font-size: 13px; font-weight: bold; color: #00e676; "
+                "  background-color: #0d2315; border: 1.5px solid #00e676; "
+                "  border-radius: 3px; padding: 6px 12px; "
+                "} "
+                "QPushButton:hover { background-color: #153822; border-color: #69f0ae; color: #69f0ae; } "
+                "QPushButton:pressed { background-color: #1f4f30; } "
+                "QPushButton:disabled { color: #5a7364; border-color: #2e4737; background-color: #121c15; }"));
+        }
+    }
+
+    if (singleButton_) {
+        singleButton_->setEnabled(!running);
+    }
 
     if (statusStateChip_) {
         switch (state) {

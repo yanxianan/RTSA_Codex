@@ -67,6 +67,7 @@ public:
     DeltaMarkerMeasurement deltaMarkerMeasurement() const noexcept;
     DeltaMarkerMeasurement deltaMarkerMeasurement(std::size_t markerIndex, std::size_t referenceIndex = 0) const noexcept;
     double lastPaintMilliseconds() const noexcept;
+    QRect plotRect() const;
 
 signals:
     void markerChanged(double frequencyHz, float amplitude,

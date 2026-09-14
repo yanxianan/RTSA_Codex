@@ -20,6 +20,7 @@ class QCheckBox;
 class QCloseEvent;
 class QDialog;
 class QEvent;
+class QFrame;
 class QDoubleSpinBox;
 class FrequencySpinBox;
 class QLabel;
@@ -46,13 +47,19 @@ public:
                         const SimulationConfig* initialSimulation = nullptr);
     ~MainWindow() override;
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 public slots:
+    void toggleAcquisition();
     void startAcquisition();
     void pauseAcquisition();
     void stopAcquisition();
     void singleAcquisition();
     void toggleFullScreen();
+    void autoTune();
     void autoRangeAmplitude();
+    void setQuickSpan(double spanHz);
     void resetFrequencyRange();
     void saveScreenshot();
     void saveSimulationScenario();
@@ -189,12 +196,10 @@ private:
     QActionGroup* colormapActionGroup_ = nullptr;
     QAction* customThemeAction_ = nullptr;
     QAction* customTraceColorAction_ = nullptr;
-    QPushButton* startButton_ = nullptr;
-    QPushButton* pauseButton_ = nullptr;
-    QPushButton* stopButton_ = nullptr;
+    QPushButton* startStopButton_ = nullptr;
     QPushButton* singleButton_ = nullptr;
+    QPushButton* autoTuneButton_ = nullptr;
     QPushButton* fullScreenButton_ = nullptr;
-    QPushButton* autoRangeButton_ = nullptr;
     QPushButton* peakButton_ = nullptr;
     QPushButton* nextPeakButton_ = nullptr;
     QPushButton* previousPeakButton_ = nullptr;
@@ -208,6 +213,9 @@ private:
     QLabel* markerLabel_ = nullptr;
     QLabel* activeMarkerDeltaLabel_ = nullptr;
     QTableWidget* markerTable_ = nullptr;
+    std::array<QFrame*, 3> deltaCards_ {};
+    std::array<QLabel*, 3> deltaCardTitleLabels_ {};
+    std::array<QLabel*, 3> deltaCardValueLabels_ {};
     QLabel* sourceStateLabel_ = nullptr;
     QLabel* inputRateLabel_ = nullptr;
     QLabel* displayRateLabel_ = nullptr;

@@ -56,35 +56,53 @@ void SimulatedSpectrumSource::setFrameSink(FrameSink sink)
 
 void SimulatedSpectrumSource::configure(const SimulationConfig& config)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    config_ = config;
-    config_.binCount = std::clamp<std::size_t>(config_.binCount, 1024U, 65536U);
-    config_.frameRate = std::clamp(config_.frameRate, 1.0, 1000.0);
-    config_.spanHz = std::max(1.0, config_.spanHz);
-    config_.noiseDeviationDb = std::max(0.0F, config_.noiseDeviationDb);
-    config_.sweepPeriodSeconds = std::clamp(config_.sweepPeriodSeconds, 0.001, 3600.0);
-    config_.transientProbability = std::clamp(config_.transientProbability, 0.0F, 1.0F);
-    config_.transientDurationSeconds = std::clamp(
-        config_.transientDurationSeconds, 0.001, 60.0);
-    config_.faults.pauseEveryFrames = std::min<std::uint32_t>(
-        config_.faults.pauseEveryFrames, 1000000U);
-    config_.faults.pauseDurationSeconds = std::clamp(
-        config_.faults.pauseDurationSeconds, 0.001, 60.0);
-    config_.faults.sequenceJumpEveryFrames = std::min<std::uint32_t>(
-        config_.faults.sequenceJumpEveryFrames, 1000000U);
-    config_.faults.sequenceSkipCount = std::clamp<std::uint32_t>(
-        config_.faults.sequenceSkipCount, 1U, 1000000U);
-    config_.faults.invalidFrameEveryFrames = std::min<std::uint32_t>(
-        config_.faults.invalidFrameEveryFrames, 1000000U);
-    config_.faults.burstEveryFrames = std::min<std::uint32_t>(
-        config_.faults.burstEveryFrames, 1000000U);
-    config_.faults.burstFrameCount = std::clamp<std::uint32_t>(
-        config_.faults.burstFrameCount, 1U, 10000U);
-    if (config_.tones.size() > 16U) {
-        config_.tones.resize(16U);
+    FrameSink sinkCopy;
+    SpectrumFramePtr previewFrame;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_ = config;
+        config_.binCount = std::clamp<std::size_t>(config_.binCount, 1024U, 65536U);
+        config_.frameRate = std::clamp(config_.frameRate, 1.0, 1000.0);
+        config_.spanHz = std::max(1.0, config_.spanHz);
+        config_.noiseDeviationDb = std::max(0.0F, config_.noiseDeviationDb);
+        config_.sweepPeriodSeconds = std::clamp(config_.sweepPeriodSeconds, 0.001, 3600.0);
+        config_.transientProbability = std::clamp(config_.transientProbability, 0.0F, 1.0F);
+        config_.transientDurationSeconds = std::clamp(
+            config_.transientDurationSeconds, 0.001, 60.0);
+        config_.faults.pauseEveryFrames = std::min<std::uint32_t>(
+            config_.faults.pauseEveryFrames, 1000000U);
+        config_.faults.pauseDurationSeconds = std::clamp(
+            config_.faults.pauseDurationSeconds, 0.001, 60.0);
+        config_.faults.sequenceJumpEveryFrames = std::min<std::uint32_t>(
+            config_.faults.sequenceJumpEveryFrames, 1000000U);
+        config_.faults.sequenceSkipCount = std::clamp<std::uint32_t>(
+            config_.faults.sequenceSkipCount, 1U, 1000000U);
+        config_.faults.invalidFrameEveryFrames = std::min<std::uint32_t>(
+            config_.faults.invalidFrameEveryFrames, 1000000U);
+        config_.faults.burstEveryFrames = std::min<std::uint32_t>(
+            config_.faults.burstEveryFrames, 1000000U);
+        config_.faults.burstFrameCount = std::clamp<std::uint32_t>(
+            config_.faults.burstFrameCount, 1U, 10000U);
+        if (config_.tones.size() > 16U) {
+            config_.tones.resize(16U);
+        }
+        ++configurationEpoch_;
+
+        const auto currentState = state_.load(std::memory_order_acquire);
+        if (sink_ && (currentState == SourceState::Paused
+                      || currentState == SourceState::Stopped
+                      || currentState == SourceState::Initialized)) {
+            sinkCopy = sink_;
+            previewFrame = generateFrame(config_, configurationEpoch_, 0.0);
+            if (previewFrame) {
+                previewFrame->metadata.sequence = ++previewSequence_;
+            }
+        }
+        wakeCondition_.notify_all();
     }
-    ++configurationEpoch_;
-    wakeCondition_.notify_all();
+    if (sinkCopy && previewFrame) {
+        sinkCopy(previewFrame);
+    }
 }
 
 SimulationConfig SimulatedSpectrumSource::configuration() const

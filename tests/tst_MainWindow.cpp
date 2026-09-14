@@ -1,4 +1,5 @@
 #include "plot/SpectrumPlotWidget.h"
+#include "plot/WaterfallPlotWidget.h"
 #include "sources/SimulatedSpectrumSource.h"
 #include "ui/ApplicationTheme.h"
 #include "ui/FrequencySpinBox.h"
@@ -76,6 +77,9 @@ private slots:
     void displayMenuProvidesThemesTraceColorsLineWidthAndGrid();
     void displayAppearanceCustomizationsApplyToSpectrumPlot();
     void enablingM2WithoutM1DoesNotHang();
+    void startStopButtonTogglesStateAndText();
+    void pausedParameterAdjustmentUpdatesPlotImmediately();
+    void autoTuneLocatesSignalAndAdjustsSpanAndAmplitude();
 };
 
 namespace {
@@ -796,6 +800,101 @@ void MainWindowTests::enablingM2WithoutM1DoesNotHang()
     QTest::qWait(200);
 
     window.stopAcquisition();
+}
+
+void MainWindowTests::startStopButtonTogglesStateAndText()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    auto* startStop = window.findChild<QPushButton*>(QStringLiteral("startStopButton"));
+    auto* single = window.findChild<QPushButton*>(QStringLiteral("singleButton"));
+    QVERIFY(startStop && single);
+
+    // Initial state: Stopped / Initialized -> button shows "开始"
+    QVERIFY(startStop->text().contains(QStringLiteral("开始")));
+    QVERIFY(single->isEnabled());
+
+    // Click startStop -> starts acquisition
+    startStop->click();
+    QTest::qWait(100);
+    QVERIFY(startStop->text().contains(QStringLiteral("停止")));
+    QVERIFY(!single->isEnabled());
+
+    // Click startStop again -> stops acquisition
+    startStop->click();
+    QTest::qWait(100);
+    QVERIFY(startStop->text().contains(QStringLiteral("开始")));
+    QVERIFY(single->isEnabled());
+}
+
+void MainWindowTests::pausedParameterAdjustmentUpdatesPlotImmediately()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
+    auto* center = window.findChild<FrequencySpinBox*>(QStringLiteral("centerFrequencyMHz"));
+    auto* span = window.findChild<FrequencySpinBox*>(QStringLiteral("spanMHz"));
+    QVERIFY(plot && center && span);
+
+    // Start then pause
+    window.startAcquisition();
+    QTest::qWait(100);
+    window.pauseAcquisition();
+    QTest::qWait(50);
+
+    // Change center frequency to 1.5 GHz and span to 50 MHz while paused
+    center->setFrequencyHz(1.5e9);
+    span->setFrequencyHz(50.0e6);
+    QMetaObject::invokeMethod(&window, "applySourceConfiguration");
+
+    QTRY_VERIFY_WITH_TIMEOUT(plot->frame() != nullptr, 500);
+    QCOMPARE(plot->frame()->metadata.centerFrequencyHz, 1.5e9);
+    QCOMPARE(plot->frame()->metadata.spanHz, 50.0e6);
+
+    window.stopAcquisition();
+}
+
+void MainWindowTests::autoTuneLocatesSignalAndAdjustsSpanAndAmplitude()
+{
+    SimulationConfig config;
+    config.centerFrequencyHz = 5.0e9; // Current center is far away at 5 GHz
+    config.spanHz = 20.0e6;
+    ToneConfig tone;
+    tone.enabled = true;
+    tone.frequencyHz = 1.2e9; // Signal is at 1.2 GHz
+    tone.amplitudeDbfs = -15.0F;
+    tone.widthHz = 2.0e6;
+    config.tones = { tone };
+
+    auto source = std::make_unique<SimulatedSpectrumSource>();
+    source->configure(config);
+
+    MainWindow window(std::move(source), nullptr, false, &config);
+    auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
+    auto* center = window.findChild<FrequencySpinBox*>(QStringLiteral("centerFrequencyMHz"));
+    auto* autoTuneBtn = window.findChild<QPushButton*>(QStringLiteral("autoTuneButton"));
+    QVERIFY(plot && center && autoTuneBtn);
+
+    // Click Auto Tune
+    autoTuneBtn->click();
+    QTest::qWait(100);
+
+    // Verify center is moved to 1.2 GHz
+    QCOMPARE(center->frequencyHz(), 1.2e9);
+    // Verify span scales the 24 MHz base width to 2 divisions (20% of 120 MHz)
+    auto* span = window.findChild<FrequencySpinBox*>(QStringLiteral("spanMHz"));
+    QVERIFY(span);
+    QCOMPARE(span->frequencyHz(), 120.0e6);
+
+    // Verify Marker 1 is enabled and at 1.2 GHz
+    QVERIFY(plot->isMarkerEnabled(0));
+    QCOMPARE(plot->markerMeasurement(0).frequencyHz, 1.2e9);
+
+    // Verify plotRect right alignment between spectrum plot and waterfall plot
+    auto* waterfall = window.findChild<WaterfallPlotWidget*>(QStringLiteral("waterfallPlot"));
+    QVERIFY(waterfall);
+    window.resize(1024, 768);
+    QCOMPARE(plot->plotRect().right(), waterfall->plotRect().right());
+    QCOMPARE(plot->plotRect().left(), waterfall->plotRect().left());
+    QCOMPARE(plot->plotRect().width(), waterfall->plotRect().width());
 }
 
 } // namespace rtsa

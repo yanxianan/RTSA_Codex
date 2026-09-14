@@ -57,7 +57,8 @@ void PlotTests::rasterWidgetRendersWithoutOpenGL()
     widget.render(&painter);
     painter.end();
 
-    QCOMPARE(widget.envelopeColumnCount(), std::size_t(904));
+    QCOMPARE(widget.envelopeColumnCount(), std::size_t(widget.plotRect().width()));
+    QCOMPARE(widget.envelopeColumnCount(), std::size_t(852));
     QVERIFY(!image.isNull());
     QVERIFY(image.pixelColor(500, 300) != QColor(Qt::transparent));
     QVERIFY(widget.lastPaintMilliseconds() >= 0.0);
@@ -84,7 +85,8 @@ void PlotTests::lowBinTraceSpansFullPlotWidth()
 
     const QColor traceColor(0, 235, 180);
     bool traceAtRightEdge = false;
-    for (int x = widget.width() - 24; x <= widget.width() - 18; ++x) {
+    const int rightEdge = widget.plotRect().right();
+    for (int x = rightEdge - 4; x <= rightEdge; ++x) {
         for (int y = 30; y < widget.height() - 54; ++y) {
             if (image.pixelColor(x, y) == traceColor) {
                 traceAtRightEdge = true;
