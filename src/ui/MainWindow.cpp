@@ -402,6 +402,12 @@ void MainWindow::refreshStatistics()
             .arg(pipelineStats.lastProcessingMilliseconds, 0, 'f', 2)
             .arg(latencyP95Label_->text())
             .arg(pipelineStats.queueDepth));
+
+        static int statLogCounter = 0;
+        if (++statLogCounter >= 4) {
+            statLogCounter = 0;
+            qInfo().noquote() << statusMetricsLabel_->text();
+        }
     }
 }
 

@@ -278,7 +278,7 @@ void RasterSpectrumRenderer::rebuildStaticLayer()
         return;
     }
 
-    staticLayer_ = QImage(widgetSize_, QImage::Format_ARGB32_Premultiplied);
+    staticLayer_ = QImage(widgetSize_, QImage::Format_RGB16);
     QColor windowColor;
     QColor plotColor;
     QColor gridColor;

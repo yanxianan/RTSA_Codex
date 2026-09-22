@@ -74,11 +74,11 @@ bool SpectrumPlotWidget::event(QEvent* event)
 void SpectrumPlotWidget::setFrame(ConstSpectrumFramePtr frame)
 {
     frame_ = std::move(frame);
-    renderer_.setFrame(frame_);
     synchronizeMarkers();
 
-    // 方案二：打包渲染上下文，唤醒后台工作线程执行离屏渲染
+    // 方案二：打包渲染上下文，唤醒后台工作线程执行离屏渲染（几何计算彻底移交后台）
     RenderContext ctx = renderer_.currentContext();
+    ctx.frame = frame_;
     ctx.widgetSize = size();
     ctx.plotRect = calculatePlotRect();
     {
@@ -407,6 +407,7 @@ void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
 
     // 若后台离屏图像尚未就绪（如冷启动第一帧或单测同步调用），平滑降级为同步绘制
     if (!renderedFromBuffer) {
+        renderer_.setFrame(frame_);
         renderer_.paint(painter);
     }
 
