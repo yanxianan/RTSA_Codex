@@ -64,7 +64,7 @@ void SpectrumPlotWidget::setFrame(ConstSpectrumFramePtr frame)
     frame_ = std::move(frame);
     renderer_.setFrame(frame_);
     synchronizeMarkers();
-    update();
+    update(renderer_.plotRect());
 }
 
 ConstSpectrumFramePtr SpectrumPlotWidget::frame() const noexcept
