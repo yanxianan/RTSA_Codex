@@ -72,6 +72,7 @@ public:
     DeltaMarkerMeasurement deltaMarkerMeasurement() const noexcept;
     DeltaMarkerMeasurement deltaMarkerMeasurement(std::size_t markerIndex, std::size_t referenceIndex = 0) const noexcept;
     double lastPaintMilliseconds() const noexcept;
+    bool isLastPaintOffscreen() const noexcept;
     QRect plotRect() const;
 
 signals:
@@ -138,6 +139,7 @@ private:
     std::mutex frontImageMutex_;
     QImage frontImage_;
     bool hasFrontImage_{false};
+    bool lastPaintOffscreen_ = false;
 };
 
 } // namespace rtsa

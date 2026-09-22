@@ -135,8 +135,13 @@ void RasterSpectrumRenderer::renderToImage(const RenderContext& ctx, QImage& tar
         return;
     }
 
-    // 利用 QImage 隐式共享 Copy-on-Write 快速复用静态底图
-    targetImage = staticLayer_;
+    // 关键优化：复用 targetImage 内存缓冲区，彻底消除每帧 8.3MB 的堆内存 malloc/free
+    if (targetImage.size() != ctx.widgetSize || targetImage.format() != staticLayer_.format()) {
+        targetImage = staticLayer_.copy();
+    } else {
+        std::memcpy(targetImage.bits(), staticLayer_.constBits(),
+                    static_cast<size_t>(staticLayer_.sizeInBytes()));
+    }
 
     QPainter painter(&targetImage);
     drawTraceAndMarkers(painter);

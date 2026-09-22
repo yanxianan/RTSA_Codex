@@ -384,17 +384,23 @@ double SpectrumPlotWidget::lastPaintMilliseconds() const noexcept
     return lastPaintMilliseconds_;
 }
 
+bool SpectrumPlotWidget::isLastPaintOffscreen() const noexcept
+{
+    return lastPaintOffscreen_;
+}
+
 void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
 {
-    Q_UNUSED(event)
     paintTimer_.restart();
     QPainter painter(this);
 
+    const QRect dirty = (event && !event->rect().isEmpty()) ? event->rect() : rect();
     bool renderedFromBuffer = false;
     {
         std::lock_guard<std::mutex> lock(frontImageMutex_);
         if (hasFrontImage_ && !frontImage_.isNull() && frontImage_.size() == size()) {
-            painter.drawImage(0, 0, frontImage_);
+            // 关键优化：只将 dirty 矩形切片贴入屏幕，彻底消除 1080P 全屏无用内存搬运！
+            painter.drawImage(dirty.topLeft(), frontImage_, dirty);
             renderedFromBuffer = true;
         }
     }
@@ -406,6 +412,7 @@ void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
 
     painter.end();
     lastPaintMilliseconds_ = static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
+    lastPaintOffscreen_ = renderedFromBuffer;
     if (frame_) {
         emit framePainted(frame_->metadata.publicationSequence,
                           frame_->metadata.timestampNs);

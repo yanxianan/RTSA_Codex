@@ -394,9 +394,11 @@ void MainWindow::refreshStatistics()
     }
 
     if (statusMetricsLabel_) {
-        statusMetricsLabel_->setText(tr("显示: %1 | 渲染: %2 ms | 处理: %3 ms | P95延时: %4 | 队列: %5")
+        const QString offscreenTag = plot_->isLastPaintOffscreen() ? tr(" [离屏加速]") : tr(" [同步降级]");
+        statusMetricsLabel_->setText(tr("显示: %1 | 渲染: %2 ms%3 | 处理: %4 ms | P95延时: %5 | 队列: %6")
             .arg(displayRateLabel_->text())
             .arg(plot_->lastPaintMilliseconds(), 0, 'f', 1)
+            .arg(offscreenTag)
             .arg(pipelineStats.lastProcessingMilliseconds, 0, 'f', 2)
             .arg(latencyP95Label_->text())
             .arg(pipelineStats.queueDepth));
