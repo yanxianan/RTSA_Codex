@@ -7,6 +7,9 @@
 #include "plot/WaterfallPlotWidget.h"
 #include "services/ConfigurationStore.h"
 #include "services/SpectrumExporter.h"
+#include "sources/DmaSpectrumSource.h"
+#include "sources/SimulatedSpectrumSource.h"
+#include "sources/SpectrumSourceFactory.h"
 #include "sources/SimulationScenarioWriter.h"
 #include "ui/FrequencySpinBox.h"
 #include "ui/UnfocusedWheelFilter.h"
@@ -165,6 +168,17 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
         simulationControl_->configure(*initialSimulation);
         loadSimulationConfiguration(*initialSimulation);
     }
+    if (sourceKindCombo_) {
+        const QSignalBlocker blocker(sourceKindCombo_);
+        const auto currentKind = (dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr)
+            ? SpectrumSourceKind::Dma
+            : SpectrumSourceKind::Simulated;
+        const int kindIdx = sourceKindCombo_->findData(static_cast<int>(currentKind));
+        if (kindIdx >= 0) {
+            sourceKindCombo_->setCurrentIndex(kindIdx);
+        }
+    }
+    updateSourceUiState();
     fullRangeCenterHz_ = centerFrequencySpin_->frequencyHz();
     fullRangeSpanHz_ = spanSpin_->frequencyHz();
     connectUi();
@@ -432,6 +446,15 @@ void MainWindow::configureSourceFromUi()
 {
     if (simulationControl_) {
         simulationControl_->configure(configurationFromUi());
+    } else if (auto* dmaSource = dynamic_cast<DmaSpectrumSource*>(source_.get())) {
+        auto cfg = dmaSource->configuration();
+        if (centerFrequencySpin_) {
+            cfg.centerFrequencyHz = centerFrequencySpin_->frequencyHz();
+        }
+        if (spanSpin_) {
+            cfg.spanHz = spanSpin_->frequencyHz();
+        }
+        dmaSource->setConfiguration(cfg);
     }
     refreshDisplay();
 }
@@ -1394,13 +1417,15 @@ void MainWindow::buildMenuBar()
 
     // 1. File Menu
     auto* fileMenu = bar->addMenu(tr("文件 (&F)"));
-    fileMenu->addAction(tr("导出频谱 CSV (&E)..."), QKeySequence(Qt::CTRL | Qt::Key_E), this, &MainWindow::exportCsv);
-    fileMenu->addAction(tr("保存屏幕截图 (&S)..."), QKeySequence(Qt::CTRL | Qt::Key_S), this, &MainWindow::saveScreenshot);
-    if (simulationControl_) {
-        fileMenu->addAction(tr("保存模拟场景 (&C)..."), this, &MainWindow::saveSimulationScenario);
-    }
+    auto* exportAction = fileMenu->addAction(tr("导出频谱 CSV (&E)..."), this, &MainWindow::exportCsv);
+    exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    auto* screenshotAction = fileMenu->addAction(tr("保存屏幕截图 (&S)..."), this, &MainWindow::saveScreenshot);
+    screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+    saveScenarioAction_ = fileMenu->addAction(tr("保存模拟场景 (&C)..."), this, &MainWindow::saveSimulationScenario);
+    saveScenarioAction_->setVisible(simulationControl_ != nullptr);
     fileMenu->addSeparator();
-    fileMenu->addAction(tr("退出 (&X)"), QKeySequence(Qt::ALT | Qt::Key_F4), this, &QWidget::close);
+    auto* closeAction = fileMenu->addAction(tr("退出 (&X)"), this, &QWidget::close);
+    closeAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_F4));
 
     // 2. Display Menu (显示菜单)
     auto* displayMenu = bar->addMenu(tr("显示 (&D)"));
@@ -1556,8 +1581,10 @@ void MainWindow::buildMenuBar()
     displayMenu->addSeparator();
 
     // 2.7 自动设置与全屏
-    displayMenu->addAction(tr("自动设置 (&Auto Set)"), QKeySequence(Qt::Key_F5), this, &MainWindow::autoTune);
-    displayMenu->addAction(tr("全屏切换 (&Full Screen)"), QKeySequence(Qt::Key_F11), this, &MainWindow::toggleFullScreen);
+    auto* autoTuneAction = displayMenu->addAction(tr("自动设置 (&Auto Set)"), this, &MainWindow::autoTune);
+    autoTuneAction->setShortcut(QKeySequence(Qt::Key_F5));
+    auto* fullScreenAction = displayMenu->addAction(tr("全屏切换 (&Full Screen)"), this, &MainWindow::toggleFullScreen);
+    fullScreenAction->setShortcut(QKeySequence(Qt::Key_F11));
 
     // 3. Help Menu
     auto* helpMenu = bar->addMenu(tr("帮助 (&H)"));
@@ -1681,19 +1708,7 @@ QWidget* MainWindow::buildControlPanel()
 
     // Tab 2: 模拟信号源 (Simulated Source) - if supported
     if (simulationControl_) {
-        auto* simPage = new QWidget;
-        auto* simLayout = new QVBoxLayout(simPage);
-        simLayout->setContentsMargins(2, 4, 2, 4);
-        simLayout->setSpacing(6);
-        simLayout->addWidget(buildSimulationGroup());
-        simLayout->addStretch(1);
-
-        auto* simScroll = new QScrollArea;
-        simScroll->setWidgetResizable(true);
-        simScroll->setFrameShape(QFrame::NoFrame);
-        simScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        simScroll->setWidget(simPage);
-        mainTabWidget_->addTab(simScroll, tr("模拟信号源"));
+        ensureSimulationTabCreated();
     }
 
     // Tab 3: 迹线与瀑布 (Trace & Waterfall)
@@ -1756,6 +1771,11 @@ QWidget* MainWindow::buildSourceGroup()
 {
     auto* group = new QGroupBox(tr("数据源与频率"), this);
     auto* form = new QFormLayout(group);
+
+    sourceKindCombo_ = new QComboBox(group);
+    sourceKindCombo_->setObjectName(QStringLiteral("sourceKind"));
+    sourceKindCombo_->addItem(tr("模拟数据源 (Simulated)"), static_cast<int>(SpectrumSourceKind::Simulated));
+    sourceKindCombo_->addItem(tr("AXI DMA 硬件源 (DMA)"), static_cast<int>(SpectrumSourceKind::Dma));
 
     centerFrequencySpin_ = new FrequencySpinBox(group);
     centerFrequencySpin_->setObjectName(QStringLiteral("centerFrequencyMHz"));
@@ -1837,6 +1857,7 @@ QWidget* MainWindow::buildSourceGroup()
         }
     }
 
+    form->addRow(tr("数据源类型"), sourceKindCombo_);
     form->addRow(tr("中心频率"), centerFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("频宽（Span）"), spanSpin_->createCompoundWidget(group));
     form->addRow(tr("常用频宽"), quickSpanWidget);
@@ -2460,31 +2481,8 @@ void MainWindow::connectUi()
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     connect(noiseFloorSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyNonFrequencySourceConfiguration);
-    if (simulationControl_) {
-        for (QDoubleSpinBox* spin : std::initializer_list<QDoubleSpinBox*>{
-                 noiseDeviationSpin_, tone1FrequencySpin_,
-                 tone1AmplitudeSpin_, tone1WidthSpin_,
-                 tone2FrequencySpin_, tone2AmplitudeSpin_,
-                 tone2WidthSpin_, sweepStartFrequencySpin_,
-                 sweepStopFrequencySpin_, sweepPeriodSpin_,
-                 sweepAmplitudeSpin_, transientProbabilitySpin_,
-                 transientAmplitudeSpin_, transientDurationSpin_ }) {
-            connect(spin, &QDoubleSpinBox::editingFinished,
-                    this, &MainWindow::applyNonFrequencySourceConfiguration);
-        }
-        connect(tone1EnabledCheck_, &QCheckBox::toggled,
-                this, &MainWindow::applyNonFrequencySourceConfiguration);
-        connect(tone2EnabledCheck_, &QCheckBox::toggled,
-                this, &MainWindow::applyNonFrequencySourceConfiguration);
-        connect(sweepEnabledCheck_, &QCheckBox::toggled,
-                this, &MainWindow::applyNonFrequencySourceConfiguration);
-        connect(sweepDirectionCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
-                this, &MainWindow::applyNonFrequencySourceConfiguration);
-        connect(unthrottledCheck_, &QCheckBox::toggled, this, [this](const bool enabled) {
-            sourceFrameRateSpin_->setEnabled(!enabled);
-            applyNonFrequencySourceConfiguration();
-        });
-    }
+    connect(sourceKindCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::handleSourceKindChanged);
     connect(fftSizeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     connect(traceModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -2802,6 +2800,141 @@ void MainWindow::updateButtonStates(const SourceState state)
                 QStringLiteral("QLabel { font-weight: bold; padding: 2px 8px; border-radius: 3px; background: #263238; color: #b0bec5; border: 1px solid #37474f; }"));
             break;
         }
+    }
+}
+
+void MainWindow::ensureSimulationTabCreated()
+{
+    if (simulationTab_) {
+        if (simulationTabIndex_ >= 0 && mainTabWidget_) {
+            mainTabWidget_->setTabVisible(simulationTabIndex_, true);
+        }
+        return;
+    }
+
+    auto* simPage = new QWidget;
+    auto* simLayout = new QVBoxLayout(simPage);
+    simLayout->setContentsMargins(2, 4, 2, 4);
+    simLayout->setSpacing(6);
+    simLayout->addWidget(buildSimulationGroup());
+    simLayout->addStretch(1);
+
+    auto* simScroll = new QScrollArea;
+    simScroll->setWidgetResizable(true);
+    simScroll->setFrameShape(QFrame::NoFrame);
+    simScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    simScroll->setWidget(simPage);
+    simulationTab_ = simScroll;
+    simulationTabIndex_ = mainTabWidget_->insertTab(1, simScroll, tr("模拟信号源"));
+
+    for (QDoubleSpinBox* spin : std::initializer_list<QDoubleSpinBox*>{
+             noiseDeviationSpin_, tone1FrequencySpin_,
+             tone1AmplitudeSpin_, tone1WidthSpin_,
+             tone2FrequencySpin_, tone2AmplitudeSpin_,
+             tone2WidthSpin_, sweepStartFrequencySpin_,
+             sweepStopFrequencySpin_, sweepPeriodSpin_,
+             sweepAmplitudeSpin_, transientProbabilitySpin_,
+             transientAmplitudeSpin_, transientDurationSpin_ }) {
+        connect(spin, &QDoubleSpinBox::editingFinished,
+                this, &MainWindow::applyNonFrequencySourceConfiguration);
+    }
+    connect(tone1EnabledCheck_, &QCheckBox::toggled,
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(tone2EnabledCheck_, &QCheckBox::toggled,
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(sweepEnabledCheck_, &QCheckBox::toggled,
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(sweepDirectionCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(unthrottledCheck_, &QCheckBox::toggled, this, [this](const bool enabled) {
+        if (simulationControl_) {
+            sourceFrameRateSpin_->setEnabled(!enabled);
+        }
+        applyNonFrequencySourceConfiguration();
+    });
+}
+
+void MainWindow::updateSourceUiState()
+{
+    const bool isSim = (simulationControl_ != nullptr);
+    if (isSim) {
+        ensureSimulationTabCreated();
+    } else if (simulationTabIndex_ >= 0 && mainTabWidget_) {
+        mainTabWidget_->setTabVisible(simulationTabIndex_, false);
+    }
+    if (saveScenarioAction_) {
+        saveScenarioAction_->setVisible(isSim);
+    }
+    if (saveScenarioButton_) {
+        saveScenarioButton_->setVisible(isSim);
+    }
+
+    if (fftSizeCombo_) {
+        if (isSim) {
+            fftSizeCombo_->setEnabled(true);
+        } else {
+            fftSizeCombo_->setCurrentText(QStringLiteral("1024"));
+            fftSizeCombo_->setEnabled(false);
+        }
+    }
+    if (sourceFrameRateSpin_) {
+        sourceFrameRateSpin_->setEnabled(isSim && (!unthrottledCheck_ || !unthrottledCheck_->isChecked()));
+    }
+    if (noiseFloorSpin_) {
+        noiseFloorSpin_->setEnabled(isSim);
+    }
+}
+
+void MainWindow::handleSourceKindChanged(int index)
+{
+    if (index < 0 || !sourceKindCombo_) {
+        return;
+    }
+    const auto newKind = static_cast<SpectrumSourceKind>(sourceKindCombo_->itemData(index).toInt());
+    const auto currentKind = (dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr)
+        ? SpectrumSourceKind::Dma
+        : SpectrumSourceKind::Simulated;
+    if (newKind == currentKind) {
+        return;
+    }
+
+    const bool wasRunning = (source_->state() == SourceState::Running || source_->state() == SourceState::Starting);
+
+    auto creationResult = createSpectrumSource(newKind);
+    if (!creationResult.source) {
+        QMessageBox::warning(this, tr("切换数据源失败"), creationResult.errorMessage);
+        const QSignalBlocker blocker(sourceKindCombo_);
+        sourceKindCombo_->setCurrentIndex(sourceKindCombo_->findData(static_cast<int>(currentKind)));
+        return;
+    }
+
+    source_->stop();
+    disconnect(source_.get(), nullptr, this, nullptr);
+
+    source_ = std::move(creationResult.source);
+    simulationControl_ = dynamic_cast<ISimulationConfigurable*>(source_.get());
+
+    connect(source_.get(), &ISpectrumSource::stateChanged,
+            this, &MainWindow::handleSourceState);
+    connect(source_.get(), &ISpectrumSource::errorOccurred, this, [this](const QString& message) {
+        lastSourceError_ = message;
+        lastSourceErrorTime_ = QDateTime::currentDateTime().toString(
+            QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        lastErrorLabel_->setText(tr("%1：%2").arg(lastSourceErrorTime_, lastSourceError_));
+        QMessageBox::critical(this, tr("数据源错误"), message);
+    });
+
+    source_->setFrameSink([this](const SpectrumFramePtr& frame) {
+        return pipeline_.submit(frame);
+    });
+
+    updateSourceUiState();
+    configureSourceFromUi();
+
+    if (wasRunning) {
+        startAcquisition();
+    } else {
+        updateButtonStates(source_->state());
     }
 }
 

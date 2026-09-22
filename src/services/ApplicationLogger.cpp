@@ -239,7 +239,7 @@ void ApplicationLogger::qtMessageHandler(const QtMsgType type,
     if (mirror && previous) {
         previous(type, context, message);
     } else if (mirror) {
-        const QByteArray utf8 = message.toLocal8Bit();
+        const QByteArray utf8 = message.toUtf8();
         std::fprintf(stderr, "%s\n", utf8.constData());
         std::fflush(stderr);
     }

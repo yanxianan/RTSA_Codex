@@ -15,6 +15,8 @@ add_executable(rtsa_source_tests
     tst_SimulatedSource.cpp
     ../src/sources/SimulatedSpectrumSource.cpp
     ../src/sources/SimulatedSpectrumSource.h
+    ../src/sources/DmaSpectrumSource.cpp
+    ../src/sources/DmaSpectrumSource.h
     ../src/sources/SpectrumSourceFactory.cpp
     ../src/sources/SpectrumSourceFactory.h
     ../src/sources/ISpectrumSource.h
@@ -174,10 +176,14 @@ add_executable(rtsa_gui_tests
     ../src/sources/ISpectrumSource.h
     ../src/sources/SimulatedSpectrumSource.cpp
     ../src/sources/SimulatedSpectrumSource.h
+    ../src/sources/DmaSpectrumSource.cpp
+    ../src/sources/DmaSpectrumSource.h
     ../src/sources/SimulationScenarioLoader.cpp
     ../src/sources/SimulationScenarioLoader.h
     ../src/sources/SimulationScenarioWriter.cpp
     ../src/sources/SimulationScenarioWriter.h
+    ../src/sources/SpectrumSourceFactory.cpp
+    ../src/sources/SpectrumSourceFactory.h
     ../src/sources/SourceTypes.h
     ../src/ui/MainWindow.cpp
     ../src/ui/MainWindow.h

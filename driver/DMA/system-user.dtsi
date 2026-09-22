@@ -1,0 +1,117 @@
+/include/ "system-conf.dtsi"
+/ {
+	chosen {
+		bootargs = "earlycon console=ttyPS0,115200 clk_ignore_unused root=/dev/mmcblk1p2 rw rootwait cma=128M";
+		stdout-path = "serial0:115200n8";
+	};
+	/* ===== 1. DP 显示专用 27MHz 参考时钟 ===== */
+	refclk_dp: refclk_dp {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <27000000>;
+	};
+	/* ===== 2. 内存保留 (OpenAMP / RPU 通信 + RTSA DMA 连续内存池) ===== */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		rproc@3ed000000 {
+			no-map;
+			reg = <0x0 0x3ed00000 0x0 0x1000000>;
+		};
+		linux,cma {
+			compatible = "shared-dma-pool";
+			reusable;
+			size = <0x0 0x8000000>; /* 128MB CMA 保留池，确保 dma_alloc_coherent 成功 */
+			alignment = <0x0 0x4000000>;
+			linux,cma-default;
+		};
+	};
+	/* ===== 3. 共享内存与 UIO 中断 ===== */
+	amba {
+		vring@0 {
+			compatible = "vring_uio";
+			reg = <0x0 0x3ed40000 0x0 0x40000>;
+		};
+		shm@0 {
+			compatible = "shm_uio";
+			reg = <0x0 0x3ed80000 0x0 0x100000>;
+		};
+		iio@ff340000 {
+			compatible = "iio_uio";
+			reg = <0x0 0xff340000 0x0 0x1000>;
+			interrupt-parent = <&gic>;
+			interrupts = <0 29 4>;
+		};
+	};
+};
+/* ===== 4. PS-GTR SerDes 配置（只绑定 DP 27MHz 时钟，切勿加网口时钟） ===== */
+&psgtr {
+	status = "okay";
+	clocks = <&refclk_dp>;
+	clock-names = "ref0";
+};
+/* ===== 5. DisplayPort 显示核心控制器 ===== */
+&zynqmp_dpsub {
+	status = "okay";
+	phy-names = "dp-phy0", "dp-phy1";
+	/* Lane 1 使用 ref0(时钟0), Lane 0 使用 ref0(时钟1) */
+	phys = <&psgtr 1 6 0 0>, <&psgtr 0 6 1 0>;
+	xlnx,max-lanes = <2>;
+	zynqmp-dp-snd-codec0 {
+		status = "okay";
+	};
+	zynqmp-dp-snd-pcm0 {
+		status = "okay";
+	};
+	zynqmp-dp-snd-pcm1 {
+		status = "okay";
+	};
+	zynqmp-dp-snd-card {
+		status = "okay";
+	};
+};
+&sdhci0 { disable-wp; };
+&sdhci1 { disable-wp; };
+/* ===== 6. 千兆 SFP 网口配置（直接继承 FSBL 初始化的硬件链路） ===== */
+&gem3 {
+	status = "okay";
+	phy-mode = "sgmii";
+	phy-handle = <&phyc>;
+	phyc: phy@c {
+		reg = <0x0c>;
+		ti,rx-internal-delay = <0x08>;
+		ti,tx-internal-delay = <0x0a>;
+		ti,fifo-depth = <0x01>;
+		ti,rxctrl-strap-worka;
+	};
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+/* ===== 7. PL 端 AXI-BRAM 与 RF-ADC 驱动 ===== */
+&axi_bram_ctrl_0 {
+	compatible = "generic-uio";
+	status = "okay";
+};
+&usp_rf_data_converter_0 {
+	compatible = "xlnx,usp-rf-data-converter-2.6";
+	uio-name = "uio4";
+	uio-offset = <0x40000>;
+	interrupts = <0 89 4>;
+};
+
+/* ===== 8. AXI DMA 与 RTSA 驱动节点 ===== */
+&amba_pl {
+	rtsa_dma_node {
+		compatible = "rtsa,spectrum-dma";
+		dmas = <&axi_dma_0 0>;
+		dma-names = "rx_chan";
+		status = "okay";
+	};
+};
+
+&axi_dma_0 {
+	status = "okay";
+};

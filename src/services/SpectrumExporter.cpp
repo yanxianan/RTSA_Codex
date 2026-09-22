@@ -45,11 +45,11 @@ ExportResult SpectrumExporter::writeCsv(const ConstSpectrumFramePtr& frame,
     QByteArray header;
     header.reserve(320);
     header += "# RTSA spectrum snapshot\n";
-    header += "# sequence," + QByteArray::number(metadata.sequence) + "\n";
-    header += "# timestamp_ns," + QByteArray::number(metadata.timestampNs) + "\n";
+    header += "# sequence," + QByteArray::number(static_cast<qulonglong>(metadata.sequence)) + "\n";
+    header += "# timestamp_ns," + QByteArray::number(static_cast<qulonglong>(metadata.timestampNs)) + "\n";
     header += "# center_frequency_hz," + QByteArray::number(metadata.centerFrequencyHz, 'f', 6) + "\n";
     header += "# span_hz," + QByteArray::number(metadata.spanHz, 'f', 6) + "\n";
-    header += "# bin_count," + QByteArray::number(metadata.binCount) + "\n";
+    header += "# bin_count," + QByteArray::number(static_cast<qulonglong>(metadata.binCount)) + "\n";
     header += "# amplitude_unit," + QByteArray(amplitudeUnitSymbol(metadata.unit)) + "\n";
     header += "# calibrated," + QByteArray(metadata.calibrated ? "true" : "false") + "\n";
     header += "bin,frequency_hz," + QByteArray(amplitudeCsvColumnName(metadata.unit)) + "\n";

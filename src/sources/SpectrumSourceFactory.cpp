@@ -1,6 +1,7 @@
 #include "sources/SpectrumSourceFactory.h"
 
 #include "sources/SimulatedSpectrumSource.h"
+#include "sources/DmaSpectrumSource.h"
 
 namespace rtsa {
 
@@ -42,10 +43,7 @@ SourceCreationResult createSpectrumSource(const SpectrumSourceKind kind)
     case SpectrumSourceKind::Simulated:
         return SourceCreationResult { std::make_unique<SimulatedSpectrumSource>(), {} };
     case SpectrumSourceKind::Dma:
-        return SourceCreationResult {
-            {},
-            QStringLiteral("DMA 数据源尚不可用：请先提供 PL 帧协议和 Linux DMA 用户态 API。")
-        };
+        return SourceCreationResult { std::make_unique<DmaSpectrumSource>(), {} };
     default:
         return SourceCreationResult { {}, QStringLiteral("不受支持的数据源类型。") };
     }

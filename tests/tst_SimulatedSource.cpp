@@ -378,8 +378,13 @@ void SimulatedSourceTests::sourceFactoryParsesAndRejectsUnavailableDma()
     QVERIFY(parseSpectrumSourceKind(QStringLiteral("DMA"), kind, error));
     QCOMPARE(static_cast<int>(kind), static_cast<int>(SpectrumSourceKind::Dma));
     SourceCreationResult dma = createSpectrumSource(kind);
-    QVERIFY(!dma.source);
-    QVERIFY(dma.errorMessage.contains(QStringLiteral("DMA")));
+    QVERIFY(dma.source);
+#ifndef __linux__
+    QSignalSpy errorSpy(dma.source.get(), &ISpectrumSource::errorOccurred);
+    QVERIFY(!dma.source->start());
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.first().at(0).toString().contains(QStringLiteral("Linux")));
+#endif
 
     QVERIFY(!parseSpectrumSourceKind(QStringLiteral("unknown"), kind, error));
     QVERIFY(!error.isEmpty());

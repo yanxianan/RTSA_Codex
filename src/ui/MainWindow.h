@@ -99,6 +99,7 @@ private slots:
     void handleSpanScaleRequested(double scaleFactor, double anchorFrequencyHz);
     void handleFrequencyPanRequested(double centerShiftHz);
     void handleFrequencyRangeSelected(double startFrequencyHz, double stopFrequencyHz);
+    void handleSourceKindChanged(int index);
     void recordPaintedFrameLatency(std::uint64_t publicationSequence,
                                    std::uint64_t timestampNs);
 
@@ -125,6 +126,8 @@ private:
     void loadSimulationConfiguration(const SimulationConfig& config);
     void saveSettings() const;
     void updateButtonStates(SourceState state);
+    void updateSourceUiState();
+    void ensureSimulationTabCreated();
     void refreshMarkerLabels();
     void configureSourceFromUi();
     void synchronizeStartStopFromCenterSpan();
@@ -141,6 +144,7 @@ private:
     QTimer* renderTimer_ = nullptr;
     QTimer* statisticsTimer_ = nullptr;
 
+    QComboBox* sourceKindCombo_ = nullptr;
     FrequencySpinBox* centerFrequencySpin_ = nullptr;
     FrequencySpinBox* spanSpin_ = nullptr;
     FrequencySpinBox* startFrequencySpin_ = nullptr;
@@ -237,6 +241,9 @@ private:
     QLabel* statusStateChip_ = nullptr;
     QLabel* statusMetricsLabel_ = nullptr;
     QTabWidget* mainTabWidget_ = nullptr;
+    QWidget* simulationTab_ = nullptr;
+    int simulationTabIndex_ = -1;
+    QAction* saveScenarioAction_ = nullptr;
     QDialog* telemetryDialog_ = nullptr;
 
     QFutureWatcher<ExportResult>* exportWatcher_ = nullptr;

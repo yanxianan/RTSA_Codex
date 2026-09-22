@@ -17,8 +17,18 @@
 #include <memory>
 #include <utility>
 
+#include <clocale>
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#include <QTextCodec>
+#endif
+
 int main(int argc, char* argv[])
 {
+    std::setlocale(LC_ALL, "C.UTF-8");
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
+#endif
+
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("RTSA"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));

@@ -17,7 +17,10 @@ add_library(rtsa_core STATIC
     core/TraceProcessor.h
 )
 
-target_include_directories(rtsa_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(rtsa_core PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/driver/DMA
+)
 
 target_compile_features(rtsa_core PUBLIC cxx_std_17)
 
@@ -46,6 +49,8 @@ add_executable(rtsa_app
     sources/ISimulationConfigurable.h
     sources/SimulatedSpectrumSource.cpp
     sources/SimulatedSpectrumSource.h
+    sources/DmaSpectrumSource.cpp
+    sources/DmaSpectrumSource.h
     sources/SimulationScenarioLoader.cpp
     sources/SimulationScenarioLoader.h
     sources/SimulationScenarioWriter.cpp
