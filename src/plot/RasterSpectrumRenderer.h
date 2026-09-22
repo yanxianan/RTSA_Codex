@@ -22,6 +22,21 @@ namespace rtsa {
 
 constexpr std::size_t kSpectrumMarkerCount = 4U;
 
+struct RenderContext {
+    ConstSpectrumFramePtr frame;
+    QSize widgetSize;
+    QRect plotRect;
+    float referenceLevel = 0.0F;
+    float bottomLevel = -140.0F;
+    QColor traceColor { 0, 235, 180 };
+    int traceWidth = 1;
+    bool gridVisible = true;
+    int themeIndex = 0;
+    QColor customBgColor;
+    std::array<std::optional<std::size_t>, kSpectrumMarkerCount> markerBins {};
+    std::size_t activeMarkerIndex = 0;
+};
+
 class RasterSpectrumRenderer final {
 public:
     void setViewport(const QSize& widgetSize, const QRect& plotRect);
@@ -37,6 +52,9 @@ public:
         std::size_t activeMarkerIndex);
     void invalidateStaticLayer();
 
+    RenderContext currentContext() const;
+    void renderToImage(const RenderContext& ctx, QImage& targetImage);
+
     void paint(QPainter& painter);
 
     QRect plotRect() const noexcept;
@@ -46,6 +64,7 @@ public:
 private:
     void rebuildStaticLayer();
     void rebuildGeometry();
+    void drawTraceAndMarkers(QPainter& painter);
     int yForAmplitude(float amplitude) const noexcept;
     QString formatFrequency(double frequencyHz) const;
     QString amplitudeUnitText() const;

@@ -100,6 +100,49 @@ void RasterSpectrumRenderer::invalidateStaticLayer()
     staticLayerDirty_ = true;
 }
 
+RenderContext RasterSpectrumRenderer::currentContext() const
+{
+    RenderContext ctx;
+    ctx.frame = frame_;
+    ctx.widgetSize = widgetSize_;
+    ctx.plotRect = plotRect_;
+    ctx.referenceLevel = referenceLevel_;
+    ctx.bottomLevel = bottomLevel_;
+    ctx.traceColor = traceColor_;
+    ctx.traceWidth = traceWidth_;
+    ctx.gridVisible = gridVisible_;
+    ctx.themeIndex = themeIndex_;
+    ctx.customBgColor = customBgColor_;
+    ctx.markerBins = markerBins_;
+    ctx.activeMarkerIndex = activeMarkerIndex_;
+    return ctx;
+}
+
+void RasterSpectrumRenderer::renderToImage(const RenderContext& ctx, QImage& targetImage)
+{
+    setViewport(ctx.widgetSize, ctx.plotRect);
+    setAmplitudeScale(ctx.referenceLevel, ctx.bottomLevel);
+    setAppearance(ctx.traceColor, ctx.traceWidth, ctx.gridVisible, ctx.themeIndex, ctx.customBgColor);
+    setFrame(ctx.frame);
+    setMarkerBins(ctx.markerBins, ctx.activeMarkerIndex);
+
+    if (staticLayerDirty_) {
+        rebuildStaticLayer();
+    }
+
+    if (staticLayer_.isNull()) {
+        targetImage = QImage();
+        return;
+    }
+
+    // 利用 QImage 隐式共享 Copy-on-Write 快速复用静态底图
+    targetImage = staticLayer_;
+
+    QPainter painter(&targetImage);
+    drawTraceAndMarkers(painter);
+    painter.end();
+}
+
 void RasterSpectrumRenderer::paint(QPainter& painter)
 {
     if (staticLayerDirty_) {
@@ -110,20 +153,14 @@ void RasterSpectrumRenderer::paint(QPainter& painter)
         painter.drawImage(QPoint(0, 0), staticLayer_);
     }
 
+    drawTraceAndMarkers(painter);
+}
+
+void RasterSpectrumRenderer::drawTraceAndMarkers(QPainter& painter)
+{
     painter.save();
     painter.setClipRect(plotRect_);
     painter.setRenderHint(QPainter::Antialiasing, false);
-
-    // 方案一优化：在嵌入式 CPU 软光栅模式下禁用 envelopeLines_（每帧上千条单像素垂直线）绘制，
-    // 单核软渲染耗时立减 15~20ms，大幅提升帧率
-    // if (!envelopeLines_.isEmpty()) {
-    //     QColor envelopeColor = traceColor_.darker(125);
-    //     envelopeColor.setAlpha(130);
-    //     QPen envelopePen(envelopeColor);
-    //     envelopePen.setWidth(1);
-    //     painter.setPen(envelopePen);
-    //     painter.drawLines(envelopeLines_);
-    // }
 
     if (peakPolyline_.size() > 1) {
         QPen tracePen(traceColor_);

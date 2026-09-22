@@ -31,6 +31,18 @@ SpectrumPlotWidget::SpectrumPlotWidget(QWidget* parent)
     grabGesture(Qt::PinchGesture);
     grabGesture(Qt::PanGesture);
     renderer_.setViewport(size(), calculatePlotRect());
+
+    // 方案二：启动多核异步离屏渲染工作线程 (运行在 CPU0/CPU1/CPU2)
+    renderWorker_ = std::thread(&SpectrumPlotWidget::workerLoop, this);
+}
+
+SpectrumPlotWidget::~SpectrumPlotWidget()
+{
+    workerStopping_.store(true, std::memory_order_release);
+    taskCv_.notify_all();
+    if (renderWorker_.joinable()) {
+        renderWorker_.join();
+    }
 }
 
 bool SpectrumPlotWidget::event(QEvent* event)
@@ -64,7 +76,17 @@ void SpectrumPlotWidget::setFrame(ConstSpectrumFramePtr frame)
     frame_ = std::move(frame);
     renderer_.setFrame(frame_);
     synchronizeMarkers();
-    update(renderer_.plotRect());
+
+    // 方案二：打包渲染上下文，唤醒后台工作线程执行离屏渲染
+    RenderContext ctx = renderer_.currentContext();
+    ctx.widgetSize = size();
+    ctx.plotRect = calculatePlotRect();
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+        pendingContext_ = std::move(ctx);
+        hasPendingContext_ = true;
+    }
+    taskCv_.notify_one();
 }
 
 ConstSpectrumFramePtr SpectrumPlotWidget::frame() const noexcept
@@ -72,9 +94,29 @@ ConstSpectrumFramePtr SpectrumPlotWidget::frame() const noexcept
     return frame_;
 }
 
+void SpectrumPlotWidget::invalidateFrontImageAndRerender()
+{
+    {
+        std::lock_guard<std::mutex> lock(frontImageMutex_);
+        hasFrontImage_ = false;
+    }
+    if (frame_ && !size().isEmpty()) {
+        RenderContext ctx = renderer_.currentContext();
+        ctx.widgetSize = size();
+        ctx.plotRect = calculatePlotRect();
+        {
+            std::lock_guard<std::mutex> lock(taskMutex_);
+            pendingContext_ = std::move(ctx);
+            hasPendingContext_ = true;
+        }
+        taskCv_.notify_one();
+    }
+}
+
 void SpectrumPlotWidget::setAmplitudeScale(const float referenceLevel, const float bottomLevel)
 {
     renderer_.setAmplitudeScale(referenceLevel, bottomLevel);
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -85,6 +127,7 @@ void SpectrumPlotWidget::setAppearance(const QColor& traceColor,
                                        const QColor& customBgColor)
 {
     renderer_.setAppearance(traceColor, traceWidth, gridVisible, themeIndex, customBgColor);
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -94,6 +137,7 @@ void SpectrumPlotWidget::setAppearance(const QColor& traceColor,
                                        const bool lightTheme)
 {
     renderer_.setAppearance(traceColor, traceWidth, gridVisible, lightTheme ? 1 : 0);
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -102,6 +146,7 @@ void SpectrumPlotWidget::setActiveMarker(const std::size_t markerIndex)
     activeMarkerIndex_ = std::min(markerIndex, kSpectrumMarkerCount - 1U);
     updateRendererMarkers();
     publishActiveMarker();
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -115,6 +160,7 @@ void SpectrumPlotWidget::clearMarker()
     markerFrequenciesHz_[activeMarkerIndex_].reset();
     updateRendererMarkers();
     emit markerCleared();
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -125,6 +171,7 @@ void SpectrumPlotWidget::clearAllMarkers()
     }
     updateRendererMarkers();
     emit markerCleared();
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -172,6 +219,7 @@ void SpectrumPlotWidget::peakSearch()
         FrequencyMapper::frequencyForBin(frame_->metadata, bestBin);
     updateRendererMarkers();
     publishActiveMarker();
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -221,6 +269,7 @@ void SpectrumPlotWidget::setMarkerFrequency(const std::size_t markerIndex, const
     if (markerIndex == activeMarkerIndex_) {
         publishActiveMarker();
     }
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -241,7 +290,10 @@ void SpectrumPlotWidget::setMarkerEnabled(const std::size_t markerIndex, const b
         markerFrequenciesHz_[markerIndex].reset();
     }
     updateRendererMarkers();
-    publishActiveMarker();
+    if (markerIndex == activeMarkerIndex_) {
+        publishActiveMarker();
+    }
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -337,7 +389,21 @@ void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
     Q_UNUSED(event)
     paintTimer_.restart();
     QPainter painter(this);
-    renderer_.paint(painter);
+
+    bool renderedFromBuffer = false;
+    {
+        std::lock_guard<std::mutex> lock(frontImageMutex_);
+        if (hasFrontImage_ && !frontImage_.isNull() && frontImage_.size() == size()) {
+            painter.drawImage(0, 0, frontImage_);
+            renderedFromBuffer = true;
+        }
+    }
+
+    // 若后台离屏图像尚未就绪（如冷启动第一帧或单测同步调用），平滑降级为同步绘制
+    if (!renderedFromBuffer) {
+        renderer_.paint(painter);
+    }
+
     painter.end();
     lastPaintMilliseconds_ = static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
     if (frame_) {
@@ -350,6 +416,49 @@ void SpectrumPlotWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     renderer_.setViewport(event->size(), calculatePlotRect());
+    {
+        std::lock_guard<std::mutex> lock(frontImageMutex_);
+        hasFrontImage_ = false;
+    }
+}
+
+void SpectrumPlotWidget::workerLoop()
+{
+    QImage localBackBuffer;
+    while (!workerStopping_.load(std::memory_order_acquire)) {
+        RenderContext ctx;
+        {
+            std::unique_lock<std::mutex> lock(taskMutex_);
+            taskCv_.wait(lock, [this] {
+                return workerStopping_.load(std::memory_order_acquire) || hasPendingContext_;
+            });
+            if (workerStopping_.load(std::memory_order_acquire)) {
+                break;
+            }
+            ctx = std::move(pendingContext_);
+            hasPendingContext_ = false;
+        }
+
+        if (!ctx.frame || ctx.widgetSize.isEmpty()) {
+            continue;
+        }
+
+        // 后台工作线程独立渲染整幅图像 (在 CPU0/CPU1/CPU2 上运行)
+        offscreenRenderer_.renderToImage(ctx, localBackBuffer);
+
+        if (!localBackBuffer.isNull()) {
+            {
+                std::lock_guard<std::mutex> lock(frontImageMutex_);
+                frontImage_ = localBackBuffer; // Qt 隐式共享浅拷贝，纳秒级
+                hasFrontImage_ = true;
+            }
+
+            const QRect dirtyRect = ctx.plotRect;
+            QMetaObject::invokeMethod(this, [this, dirtyRect] {
+                update(dirtyRect);
+            }, Qt::QueuedConnection);
+        }
+    }
 }
 
 void SpectrumPlotWidget::mousePressEvent(QMouseEvent* event)
@@ -563,6 +672,7 @@ void SpectrumPlotWidget::selectMarkerAt(const QPoint& position)
         FrequencyMapper::frequencyForBin(frame_->metadata, bin);
     updateRendererMarkers();
     publishActiveMarker();
+    invalidateFrontImageAndRerender();
     update();
 }
 
@@ -780,6 +890,7 @@ void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
                     FrequencyMapper::frequencyForBin(frame_->metadata, p);
                 updateRendererMarkers();
                 publishActiveMarker();
+                invalidateFrontImageAndRerender();
                 update();
                 return;
             }
@@ -791,6 +902,7 @@ void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
                 FrequencyMapper::frequencyForBin(frame_->metadata, first);
             updateRendererMarkers();
             publishActiveMarker();
+            invalidateFrontImageAndRerender();
             update();
         }
     } else {
@@ -801,6 +913,7 @@ void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
                     FrequencyMapper::frequencyForBin(frame_->metadata, *it);
                 updateRendererMarkers();
                 publishActiveMarker();
+                invalidateFrontImageAndRerender();
                 update();
                 return;
             }
@@ -812,6 +925,7 @@ void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
                 FrequencyMapper::frequencyForBin(frame_->metadata, last);
             updateRendererMarkers();
             publishActiveMarker();
+            invalidateFrontImageAndRerender();
             update();
         }
     }

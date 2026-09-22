@@ -8,9 +8,13 @@
 #include <QString>
 #include <QWidget>
 
-#include <cstddef>
 #include <array>
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
+#include <mutex>
 #include <optional>
+#include <thread>
 
 class QRubberBand;
 
@@ -34,6 +38,7 @@ class SpectrumPlotWidget final : public QWidget {
 
 public:
     explicit SpectrumPlotWidget(QWidget* parent = nullptr);
+    ~SpectrumPlotWidget() override;
 
     void setFrame(ConstSpectrumFramePtr frame);
     ConstSpectrumFramePtr frame() const noexcept;
@@ -117,6 +122,22 @@ private:
     bool panning_ = false;
     bool boxZooming_ = false;
     QRubberBand* zoomBand_ = nullptr;
+
+    void invalidateFrontImageAndRerender();
+    void workerLoop();
+
+    // 方案二：多核异步离屏渲染工作线程与双缓冲
+    RasterSpectrumRenderer offscreenRenderer_;
+    std::thread renderWorker_;
+    std::mutex taskMutex_;
+    std::condition_variable taskCv_;
+    std::atomic<bool> workerStopping_{false};
+    RenderContext pendingContext_;
+    bool hasPendingContext_{false};
+
+    std::mutex frontImageMutex_;
+    QImage frontImage_;
+    bool hasFrontImage_{false};
 };
 
 } // namespace rtsa
