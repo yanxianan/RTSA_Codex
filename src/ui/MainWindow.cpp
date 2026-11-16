@@ -2,6 +2,7 @@
 
 #include "core/AmplitudeUnits.h"
 #include "core/FrequencyMapper.h"
+#include "core/PlRegisterMap.h"
 #include "core/SpectrumMeasurements.h"
 #include "plot/SpectrumPlotWidget.h"
 #include "plot/WaterfallPlotWidget.h"
@@ -30,6 +31,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -42,9 +44,11 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
-#include <QScrollBar>
+#include <QScreen>
 #include <QSettings>
+#include <QShowEvent>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -55,9 +59,11 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QWindow>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -82,6 +88,9 @@ constexpr std::array<QRgb, 4> kClassicThemeRgb = {
     0xFF07131E, // 2: 深海科技 (Deep Navy)
     0xFF000000  // 3: 复古纯黑 (Pitch Black)
 };
+
+// Fixed RFDC NCO used by ADC0/ADC1 slice 0 in the current bitstream.
+constexpr double kRfadcNcoCenterHz = 1.7e9;
 
 [[maybe_unused]] QString sourceStateText(const SourceState state)
 {
@@ -132,20 +141,6 @@ QString formatFrequencyDelta(const double frequencyHz)
     return QStringLiteral("%1 Hz").arg(frequencyHz, 0, 'f', 1);
 }
 
-class NoHorizontalScrollArea final : public QScrollArea {
-public:
-    explicit NoHorizontalScrollArea(QWidget* parent = nullptr) : QScrollArea(parent) {
-        setWidgetResizable(true);
-        setFrameShape(QFrame::NoFrame);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        horizontalScrollBar()->setEnabled(false);
-    }
-protected:
-    void scrollContentsBy(int /*dx*/, int dy) override {
-        QScrollArea::scrollContentsBy(0, dy);
-    }
-};
-
 } // namespace
 
 MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
@@ -160,10 +155,24 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
         throw std::invalid_argument("MainWindow requires a spectrum source.");
     }
     simulationControl_ = dynamic_cast<ISimulationConfigurable*>(source_.get());
-    setWindowTitle(tr("RFSoC ZU47DR 实时频谱分析仪"));
+    setWindowTitle(tr("SpectrumPro - 大带宽实时频谱分析仪"));
+    QIcon windowIcon(QStringLiteral(":/icons/app.ico"));
+    if (windowIcon.isNull()) {
+        windowIcon = QIcon(QStringLiteral(":/icons/app.png"));
+    }
+    setWindowIcon(windowIcon);
+
+    layoutUpdateTimer_ = new QTimer(this);
+    layoutUpdateTimer_->setSingleShot(true);
+    layoutUpdateTimer_->setInterval(60);
+    connect(layoutUpdateTimer_, &QTimer::timeout,
+            this, &MainWindow::applyResponsiveLayout);
+
     resize(1440, 860);
     buildUi();
     loadSettings();
+    applyInitialWindowGeometry();
+    applyResponsiveLayout();
     if (initialSimulation && simulationControl_) {
         simulationControl_->configure(*initialSimulation);
         loadSimulationConfiguration(*initialSimulation);
@@ -199,7 +208,8 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
 
     renderTimer_ = new QTimer(this);
     renderTimer_->setTimerType(Qt::PreciseTimer);
-    renderTimer_->setInterval(10);
+    renderTimer_->setInterval(static_cast<int>(
+        std::lround(1000.0 / static_cast<double>(displayRefreshRate_))));
     connect(renderTimer_, &QTimer::timeout, this, &MainWindow::refreshDisplay);
     renderTimer_->start();
 
@@ -209,6 +219,7 @@ MainWindow::MainWindow(std::unique_ptr<ISpectrumSource> source,
     statisticsTimer_->start();
 
     displayRateTimer_.start();
+    paintedRateTimer_.start();
     updateButtonStates(source_->state());
     refreshStatistics();
 }
@@ -222,6 +233,144 @@ MainWindow::~MainWindow()
     saveSettings();
 }
 
+bool MainWindow::setSpectrumRenderMode(const QString& mode)
+{
+    const QString normalized = mode.trimmed().toLower();
+    SpectrumPlotWidget::RenderMode renderMode;
+    if (normalized == QStringLiteral("direct")) {
+        renderMode = SpectrumPlotWidget::RenderMode::Direct;
+    } else if (normalized == QStringLiteral("offscreen")) {
+        renderMode = SpectrumPlotWidget::RenderMode::Offscreen;
+    } else {
+        return false;
+    }
+
+    if (plot_) {
+        plot_->setRenderMode(renderMode);
+    }
+    return true;
+}
+
+QString MainWindow::spectrumRenderMode() const
+{
+    if (!plot_) {
+        return QStringLiteral("offscreen");
+    }
+    return plot_->renderMode() == SpectrumPlotWidget::RenderMode::Direct
+        ? QStringLiteral("direct")
+        : QStringLiteral("offscreen");
+}
+
+void MainWindow::setDisplayRefreshRate(const int fps)
+{
+    displayRefreshRate_ = std::clamp(fps, 1, 240);
+    if (!renderTimer_) {
+        return;
+    }
+
+    const int intervalMs = std::max(
+        1, static_cast<int>(std::lround(1000.0 / displayRefreshRate_)));
+    renderTimer_->setInterval(intervalMs);
+    if (!renderTimer_->isActive()) {
+        renderTimer_->start();
+    }
+}
+
+int MainWindow::displayRefreshRate() const noexcept
+{
+    return displayRefreshRate_;
+}
+
+void MainWindow::setRenderDiagnosticsEnabled(const bool enabled)
+{
+    renderDiagnosticsEnabled_ = enabled;
+    if (enabled) {
+        if (plot_) {
+            plot_->resetRenderDiagnostics();
+        }
+        if (waterfallPlot_) {
+            waterfallPlot_->resetRenderDiagnostics();
+        }
+        paintedFramesInWindow_ = 0U;
+        paintedFramesPerSecond_ = 0.0;
+        paintedRateTimer_.restart();
+    }
+}
+
+bool MainWindow::renderDiagnosticsEnabled() const noexcept
+{
+    return renderDiagnosticsEnabled_;
+}
+
+bool MainWindow::setRenderBenchmarkMode(const QString& mode)
+{
+    const QString normalized = mode.trimmed().toLower();
+    RenderBenchmarkMode benchmarkMode;
+    if (normalized == QStringLiteral("off")) {
+        benchmarkMode = RenderBenchmarkMode::Off;
+    } else if (normalized == QStringLiteral("static")) {
+        benchmarkMode = RenderBenchmarkMode::Static;
+    } else if (normalized == QStringLiteral("trace")) {
+        benchmarkMode = RenderBenchmarkMode::Trace;
+    } else if (normalized == QStringLiteral("waterfall")) {
+        benchmarkMode = RenderBenchmarkMode::Waterfall;
+    } else if (normalized == QStringLiteral("mixed")) {
+        benchmarkMode = RenderBenchmarkMode::Mixed;
+    } else {
+        return false;
+    }
+
+    if (benchmarkMode != RenderBenchmarkMode::Off
+        && source_
+        && (source_->state() == SourceState::Running
+            || source_->state() == SourceState::Starting)) {
+        source_->stop();
+    }
+
+    renderBenchmarkMode_ = benchmarkMode;
+    benchmarkBaseFrame_.reset();
+    benchmarkSequence_ = 0U;
+    benchmarkPhase_ = 0.0;
+    benchmarkStaticFrameSent_ = false;
+    if (waterfallPlot_ && benchmarkMode != RenderBenchmarkMode::Off) {
+        waterfallPlot_->clear();
+    }
+
+    switch (benchmarkMode) {
+    case RenderBenchmarkMode::Static:
+    case RenderBenchmarkMode::Trace:
+        setDisplayViewMode(0);
+        break;
+    case RenderBenchmarkMode::Waterfall:
+        setDisplayViewMode(1);
+        break;
+    case RenderBenchmarkMode::Mixed:
+        setDisplayViewMode(2);
+        break;
+    case RenderBenchmarkMode::Off:
+    default:
+        break;
+    }
+    return true;
+}
+
+QString MainWindow::renderBenchmarkMode() const
+{
+    switch (renderBenchmarkMode_) {
+    case RenderBenchmarkMode::Static:
+        return QStringLiteral("static");
+    case RenderBenchmarkMode::Trace:
+        return QStringLiteral("trace");
+    case RenderBenchmarkMode::Waterfall:
+        return QStringLiteral("waterfall");
+    case RenderBenchmarkMode::Mixed:
+        return QStringLiteral("mixed");
+    case RenderBenchmarkMode::Off:
+    default:
+        return QStringLiteral("off");
+    }
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     saveSettings();
@@ -231,8 +380,91 @@ void MainWindow::closeEvent(QCloseEvent* event)
 void MainWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::WindowStateChange && fullScreenButton_) {
+    if (event->type() == QEvent::WindowStateChange) {
+        if (fullScreenButton_) {
+            fullScreenButton_->setText(isFullScreen() ? tr("退出全屏") : tr("进入全屏"));
+        }
+        QTimer::singleShot(0, this, [this] {
+            if (fullScreenButton_) {
+                fullScreenButton_->setText(isFullScreen() ? tr("退出全屏") : tr("进入全屏"));
+            }
+        });
+        scheduleResponsiveLayout();
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (fullScreenButton_) {
         fullScreenButton_->setText(isFullScreen() ? tr("退出全屏") : tr("进入全屏"));
+    }
+    scheduleResponsiveLayout();
+}
+
+void MainWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+
+    if (!screenSignalsConnected_) {
+        if (QWindow* handle = windowHandle()) {
+            connect(handle, &QWindow::screenChanged, this, [this](QScreen*) {
+                scheduleResponsiveLayout();
+                ensureWindowWithinScreen();
+            });
+            connect(handle, &QWindow::windowStateChanged, this, [this](Qt::WindowState) {
+                if (fullScreenButton_) {
+                    fullScreenButton_->setText(isFullScreen() ? tr("退出全屏") : tr("进入全屏"));
+                }
+                scheduleResponsiveLayout();
+            });
+        }
+
+        for (QScreen* screen : QGuiApplication::screens()) {
+            connect(screen, &QScreen::geometryChanged, this, [this](const QRect&) {
+                scheduleResponsiveLayout();
+                ensureWindowWithinScreen();
+            });
+            connect(screen, &QScreen::availableGeometryChanged, this, [this](const QRect&) {
+                scheduleResponsiveLayout();
+                ensureWindowWithinScreen();
+            });
+            connect(screen, &QScreen::logicalDotsPerInchChanged, this, [this](qreal) {
+                scheduleResponsiveLayout();
+            });
+        }
+        screenSignalsConnected_ = true;
+    }
+
+    ensureWindowWithinScreen();
+    QTimer::singleShot(0, this, [this] {
+        ensureWindowWithinScreen();
+        scheduleResponsiveLayout();
+    });
+    applyResponsiveLayout();
+
+    if (!uiEnvironmentLogged_) {
+        const QScreen* screen = currentScreen();
+        qInfo().noquote()
+            << "UI environment:"
+            << "qt=" << qVersion()
+            << "qpa=" << QGuiApplication::platformName()
+            << "screen=" << (screen ? screen->name() : QStringLiteral("<none>"))
+            << "geometry=" << (screen ? screen->geometry() : QRect())
+            << "available=" << (screen ? screen->availableGeometry() : QRect())
+            << "dpr=" << (screen ? screen->devicePixelRatio() : 0.0)
+            << "logicalDpi=" << (screen ? screen->logicalDotsPerInch() : 0.0)
+            << "physicalDpi=" << (screen ? screen->physicalDotsPerInch() : 0.0)
+            << "font=" << QGuiApplication::font().toString()
+            << "scaleFactor=" << qEnvironmentVariable("QT_SCALE_FACTOR")
+            << "screenScaleFactors=" << qEnvironmentVariable("QT_SCREEN_SCALE_FACTORS")
+            << "autoScreenScale=" << qEnvironmentVariable("QT_AUTO_SCREEN_SCALE_FACTOR")
+            << "fontDpi=" << qEnvironmentVariable("QT_FONT_DPI")
+            << "window=" << frameGeometry()
+            << "layout=" << (compactLayout_ ? "compact" : "wide")
+            << "panel=" << (controlPanel_ ? controlPanel_->size() : QSize())
+            << "plot=" << (plot_ ? plot_->size() : QSize());
+        uiEnvironmentLogged_ = true;
     }
 }
 
@@ -327,6 +559,11 @@ void MainWindow::toggleFullScreen()
 
 void MainWindow::refreshDisplay()
 {
+    if (renderBenchmarkMode_ != RenderBenchmarkMode::Off) {
+        refreshRenderBenchmark();
+        return;
+    }
+
     const auto frame = pipeline_.latest();
     if (!frame
         || frame->metadata.publicationSequence == lastDisplayedPublicationSequence_) {
@@ -347,14 +584,140 @@ void MainWindow::refreshDisplay()
     }
 }
 
+void MainWindow::refreshRenderBenchmark()
+{
+    if (renderBenchmarkMode_ == RenderBenchmarkMode::Off || !plot_) {
+        return;
+    }
+
+    if (renderBenchmarkMode_ == RenderBenchmarkMode::Static) {
+        if (!benchmarkStaticFrameSent_) {
+            const SpectrumFramePtr frame = createBenchmarkFrame(false);
+            if (!frame) {
+                return;
+            }
+            plot_->setFrame(frame);
+            lastDisplayedPublicationSequence_ = frame->metadata.publicationSequence;
+            benchmarkStaticFrameSent_ = true;
+        }
+        plot_->update();
+    } else {
+        const SpectrumFramePtr frame = createBenchmarkFrame(true);
+        if (!frame) {
+            return;
+        }
+        if (renderBenchmarkMode_ == RenderBenchmarkMode::Trace
+            || renderBenchmarkMode_ == RenderBenchmarkMode::Mixed) {
+            plot_->setFrame(frame);
+        }
+        if (waterfallPlot_
+            && (renderBenchmarkMode_ == RenderBenchmarkMode::Waterfall
+                || renderBenchmarkMode_ == RenderBenchmarkMode::Mixed)) {
+            waterfallPlot_->addFrame(frame);
+        }
+        lastDisplayedPublicationSequence_ = frame->metadata.publicationSequence;
+    }
+
+    ++displayedFramesInWindow_;
+    ++displayedFramesTotal_;
+}
+
+SpectrumFramePtr MainWindow::createBenchmarkFrame(const bool advancePhase)
+{
+    if (!benchmarkBaseFrame_) {
+        auto base = std::make_shared<SpectrumFrame>();
+        const int configuredBins = fftSizeCombo_
+            ? fftSizeCombo_->currentData().toInt()
+            : 16384;
+        const int binCount = std::clamp(configuredBins, 1024, 65536);
+        base->metadata.binCount = static_cast<std::uint32_t>(binCount);
+        base->metadata.centerFrequencyHz = centerFrequencySpin_
+            ? centerFrequencySpin_->frequencyHz()
+            : 1.0e9;
+        base->metadata.spanHz = spanSpin_
+            ? spanSpin_->frequencyHz()
+            : 200.0e6;
+        base->metadata.configurationEpoch = 1U;
+        base->bins.resize(static_cast<std::size_t>(binCount));
+
+        const auto addPeak = [&base](const double centerRatio,
+                                     const double widthRatio,
+                                     const float peakLevel) {
+            const std::size_t count = base->bins.size();
+            const double center = centerRatio * static_cast<double>(count - 1U);
+            const double sigma = std::max(1.0, widthRatio * static_cast<double>(count));
+            const int halfWidth = std::max(2, static_cast<int>(std::ceil(sigma * 4.0)));
+            const int first = std::max(0, static_cast<int>(center) - halfWidth);
+            const int last = std::min(
+                static_cast<int>(count) - 1,
+                static_cast<int>(center) + halfWidth);
+            for (int index = first; index <= last; ++index) {
+                const double delta = (static_cast<double>(index) - center) / sigma;
+                const float value = peakLevel
+                    - static_cast<float>(3.0 * delta * delta);
+                base->bins[static_cast<std::size_t>(index)] = std::max(
+                    base->bins[static_cast<std::size_t>(index)], value);
+            }
+        };
+
+        for (int index = 0; index < binCount; ++index) {
+            const double x = static_cast<double>(index);
+            const float floor = -108.0F
+                + static_cast<float>(2.0 * std::sin(x * 0.013))
+                + static_cast<float>(0.8 * std::cos(x * 0.071));
+            base->bins[static_cast<std::size_t>(index)] = floor;
+        }
+        addPeak(0.18, 0.008, -22.0F);
+        addPeak(0.46, 0.014, -35.0F);
+        addPeak(0.73, 0.0035, -16.0F);
+        benchmarkBaseFrame_ = std::move(base);
+    }
+
+    auto frame = std::make_shared<SpectrumFrame>(*benchmarkBaseFrame_);
+    if (advancePhase && !frame->bins.empty()) {
+        const std::size_t count = frame->bins.size();
+        const std::size_t center = static_cast<std::size_t>(
+            (0.10 + benchmarkPhase_ * 0.80) * static_cast<double>(count - 1U));
+        const int halfWidth = std::max(2, static_cast<int>(count / 512U));
+        const int first = std::max(0, static_cast<int>(center) - halfWidth);
+        const int last = std::min(
+            static_cast<int>(count) - 1,
+            static_cast<int>(center) + halfWidth);
+        for (int index = first; index <= last; ++index) {
+            const double normalized =
+                static_cast<double>(index - static_cast<int>(center))
+                / static_cast<double>(halfWidth);
+            frame->bins[static_cast<std::size_t>(index)] = std::max(
+                frame->bins[static_cast<std::size_t>(index)],
+                static_cast<float>(-14.0 - 20.0 * normalized * normalized));
+        }
+        benchmarkPhase_ += 0.035;
+        if (benchmarkPhase_ >= 1.0) {
+            benchmarkPhase_ -= 1.0;
+        }
+    }
+
+    ++benchmarkSequence_;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    frame->metadata.sequence = benchmarkSequence_;
+    frame->metadata.publicationSequence = benchmarkSequence_;
+    frame->metadata.timestampNs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+    return frame;
+}
+
 void MainWindow::refreshStatistics()
 {
     const auto sourceStats = source_->statistics();
     const auto pipelineStats = pipeline_.statistics();
     const qint64 displayElapsedMs = std::max<qint64>(1, displayRateTimer_.restart());
+    const qint64 paintedElapsedMs = std::max<qint64>(1, paintedRateTimer_.restart());
     displayFramesPerSecond_ = static_cast<double>(displayedFramesInWindow_) * 1000.0
         / static_cast<double>(displayElapsedMs);
+    paintedFramesPerSecond_ = static_cast<double>(paintedFramesInWindow_) * 1000.0
+        / static_cast<double>(paintedElapsedMs);
     displayedFramesInWindow_ = 0;
+    paintedFramesInWindow_ = 0;
     sourceStateLabel_->setText(sourceStateText(source_->state()));
     inputRateLabel_->setText(formatRate(sourceStats.intervalFrameRate, QStringLiteral("FPS")));
     displayRateLabel_->setText(formatRate(displayFramesPerSecond_, QStringLiteral("FPS")));
@@ -394,11 +757,18 @@ void MainWindow::refreshStatistics()
     }
 
     if (statusMetricsLabel_) {
-        const QString offscreenTag = plot_->isLastPaintOffscreen() ? tr(" [离屏加速]") : tr(" [同步降级]");
-        statusMetricsLabel_->setText(tr("显示: %1 | 渲染: %2 ms%3 | 处理: %4 ms | P95延时: %5 | 队列: %6")
+        QString modeTag;
+        if (plot_->renderMode() == SpectrumPlotWidget::RenderMode::Direct) {
+            modeTag = tr("[直绘]");
+        } else if (plot_->isLastPaintOffscreen()) {
+            modeTag = tr("[离屏]");
+        } else {
+            modeTag = tr("[同步兜底]");
+        }
+        statusMetricsLabel_->setText(tr("显示: %1 | 渲染: %2 ms %3 | 处理: %4 ms | P95延时: %5 | 队列: %6")
             .arg(displayRateLabel_->text())
             .arg(plot_->lastPaintMilliseconds(), 0, 'f', 1)
-            .arg(offscreenTag)
+            .arg(modeTag)
             .arg(pipelineStats.lastProcessingMilliseconds, 0, 'f', 2)
             .arg(latencyP95Label_->text())
             .arg(pipelineStats.queueDepth));
@@ -408,6 +778,40 @@ void MainWindow::refreshStatistics()
             statLogCounter = 0;
             qInfo().noquote() << statusMetricsLabel_->text();
         }
+    }
+
+    if (renderDiagnosticsEnabled_ && plot_) {
+        const SpectrumRenderDiagnostics plotMetrics = plot_->renderDiagnostics();
+        const WaterfallRenderDiagnostics waterfallMetrics =
+            waterfallPlot_ ? waterfallPlot_->renderDiagnostics()
+                           : WaterfallRenderDiagnostics {};
+        const auto timingText = [](const TimingSummary& timing) {
+            return QStringLiteral("%1/%2/%3/%4")
+                .arg(timing.lastMs, 0, 'f', 2)
+                .arg(timing.p50Ms, 0, 'f', 2)
+                .arg(timing.p95Ms, 0, 'f', 2)
+                .arg(timing.p99Ms, 0, 'f', 2);
+        };
+        qInfo().noquote().nospace()
+            << "Render diagnostics: mode=" << spectrumRenderMode()
+            << " benchmark=" << renderBenchmarkMode()
+            << " targetFps=" << displayRefreshRate_
+            << " displayFps=" << QString::number(displayFramesPerSecond_, 'f', 1)
+            << " paintedFps=" << QString::number(paintedFramesPerSecond_, 'f', 1)
+            << " paint(last/p50/p95/p99)=" << timingText(plotMetrics.guiPaint) << "ms"
+            << " render=" << timingText(plotMetrics.renderTotal) << "ms"
+            << " geometry=" << timingText(plotMetrics.geometry) << "ms"
+            << " staticBuild=" << timingText(plotMetrics.staticBuild) << "ms"
+            << " staticRestore=" << timingText(plotMetrics.staticRestore) << "ms"
+            << " trace=" << timingText(plotMetrics.trace) << "ms"
+            << " pendingOverwrite=" << plotMetrics.pendingOverwriteCount
+            << " syncFallback=" << plotMetrics.syncFallbackCount
+            << " directPaints=" << plotMetrics.directPaintCount
+            << " offscreenPaints=" << plotMetrics.offscreenPaintCount
+            << " waterfallIngest=" << timingText(waterfallMetrics.ingest) << "ms"
+            << " waterfallPaint=" << timingText(waterfallMetrics.paint) << "ms"
+            << " qtPaintLatencyP95="
+            << (displayLatencyCount_ > 0U ? displayLatencyP95() : 0.0) << "ms";
     }
 }
 
@@ -462,6 +866,43 @@ void MainWindow::configureSourceFromUi()
         if (spanSpin_) {
             cfg.spanHz = spanSpin_->frequencyHz();
         }
+        if (dmaModeCombo_) {
+            cfg.dmaMode = static_cast<std::uint8_t>(
+                std::clamp(dmaModeCombo_->currentData().toInt(), 1, 3));
+        }
+        if (cicRateSpin_) {
+            cfg.cicRate = normalizeCicRate(static_cast<std::uint16_t>(
+                std::clamp(cicRateSpin_->value(), 1, 8192)));
+        }
+        if (cicTruncSpin_) {
+            cfg.cicTrunc = static_cast<std::uint8_t>(
+                std::clamp(cicTruncSpin_->value(), 0, 80));
+        }
+        if (hbLevelSpin_) {
+            cfg.hbLevel = static_cast<std::uint8_t>(
+                std::clamp(hbLevelSpin_->value(), 0, 6));
+        }
+        if (maxHoldFramesSpin_) {
+            cfg.maxHoldFrames = static_cast<std::uint16_t>(
+                std::clamp(maxHoldFramesSpin_->value(), 1, 65535));
+            cfg.accumulationFrames = cfg.maxHoldFrames;
+        }
+        if (ddsFrequencySpin_) {
+            cfg.ddsFrequencyHz = ddsFrequencySpin_->frequencyHz();
+        }
+
+        // The hardware FFT is fixed at 1024 points. Its complex FFT span is
+        // exactly the post-decimation sample rate:
+        //   312.5 MSPS / (CIC_RATE x 2^HB_LEVEL)
+        cfg.binCount = 1024U;
+        cfg.hardwareSpanHz = static_cast<std::uint64_t>(std::llround(
+            plDecimatedSampleRateHz(cfg.cicRate, cfg.hbLevel)));
+        // DMA frames are always rendered at the hardware FFT span. The
+        // display-span control is locked to the same value in DMA mode.
+        cfg.spanHz = static_cast<double>(cfg.hardwareSpanHz);
+        cfg.traceMode = 1U; // PL data path implements Max Hold.
+        cfg.frameBytes = 2112U;
+        ++cfg.configEpoch;
         dmaSource->setConfiguration(cfg);
     }
     refreshDisplay();
@@ -470,9 +911,10 @@ void MainWindow::configureSourceFromUi()
 void MainWindow::applyTraceConfiguration()
 {
     const auto mode = static_cast<TraceMode>(traceModeCombo_->currentData().toInt());
+    const bool isDma = dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr;
     pipeline_.setAverageCount(static_cast<std::size_t>(averageCountSpin_->value()));
     pipeline_.setTraceMode(mode);
-    averageCountSpin_->setEnabled(mode == TraceMode::Average);
+    averageCountSpin_->setEnabled(!isDma && mode == TraceMode::Average);
 }
 
 void MainWindow::applyAmplitudeScale()
@@ -694,12 +1136,16 @@ void MainWindow::applyWaterfallSettings()
 void MainWindow::autoRangeAmplitude()
 {
     const auto frame = pipeline_.latest();
-    if (!frame || frame->bins.empty()) {
+    if (!frame || frame->binCount() == 0U) {
         return;
     }
-    const auto extrema = std::minmax_element(frame->bins.cbegin(), frame->bins.cend());
-    const double minimum = static_cast<double>(*extrema.first);
-    const double maximum = static_cast<double>(*extrema.second);
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < frame->binCount(); ++index) {
+        const double value = static_cast<double>(frame->binDb(index));
+        minimum = std::min(minimum, value);
+        maximum = std::max(maximum, value);
+    }
     const double dataRange = std::max(20.0, maximum - minimum);
     const double margin = std::max(3.0, dataRange * 0.1);
     double reference = std::ceil((maximum + margin) / 10.0) * 10.0;
@@ -722,7 +1168,14 @@ void MainWindow::autoRangeAmplitude()
 
 void MainWindow::setQuickSpan(const double spanHz)
 {
-    const double clamped = std::clamp(spanHz,
+    double targetSpanHz = spanHz;
+    if (dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr
+        && cicRateSpin_ && hbLevelSpin_) {
+        targetSpanHz = plDecimatedSampleRateHz(
+            static_cast<std::uint16_t>(cicRateSpin_->value()),
+            static_cast<std::uint8_t>(hbLevelSpin_->value()));
+    }
+    const double clamped = std::clamp(targetSpanHz,
                                       spanSpin_->minimumFrequencyHz(),
                                       spanSpin_->maximumFrequencyHz());
     {
@@ -788,25 +1241,30 @@ void MainWindow::autoTune()
 
     // Inspect the actual spectrum frame to refine peak position and base width
     const auto frame = pipeline_.latest();
-    if (frame && !frame->bins.empty()) {
-        const auto extrema = std::max_element(frame->bins.cbegin(), frame->bins.cend());
-        const std::size_t maxBin = static_cast<std::size_t>(
-            std::distance(frame->bins.cbegin(), extrema));
-        const float framePeakAmp = *extrema;
+    if (frame && frame->binCount() > 0U) {
+        std::size_t maxBin = 0U;
+        float framePeakAmp = frame->binDb(0);
+        for (std::size_t index = 1U; index < frame->binCount(); ++index) {
+            const float value = frame->binDb(index);
+            if (value > framePeakAmp) {
+                framePeakAmp = value;
+                maxBin = index;
+            }
+        }
 
         if (!foundSignal || framePeakAmp > peakAmpDbfs - 10.0F) {
             const double binFreq = FrequencyMapper::frequencyForBin(frame->metadata, maxBin);
-            const double binRes = frame->metadata.spanHz / static_cast<double>(frame->bins.size());
+            const double binRes = frame->metadata.spanHz / static_cast<double>(frame->binCount());
             const float noiseFloor = noiseFloorSpin_ ? static_cast<float>(noiseFloorSpin_->value()) : -110.0F;
             const float threshold = std::max(noiseFloor + 3.0F, framePeakAmp - 50.0F);
 
             // Search left for base boundary
             std::size_t leftBin = maxBin;
-            while (leftBin > 0 && frame->bins[leftBin] > threshold) {
-                if (leftBin + 1 < frame->bins.size() && leftBin > 1
-                    && frame->bins[leftBin] < framePeakAmp - 20.0F
-                    && frame->bins[leftBin] < frame->bins[leftBin - 1]
-                    && frame->bins[leftBin] < frame->bins[leftBin + 1]) {
+            while (leftBin > 0 && frame->binDb(leftBin) > threshold) {
+                if (leftBin + 1 < frame->binCount() && leftBin > 1
+                    && frame->binDb(leftBin) < framePeakAmp - 20.0F
+                    && frame->binDb(leftBin) < frame->binDb(leftBin - 1)
+                    && frame->binDb(leftBin) < frame->binDb(leftBin + 1)) {
                     break;
                 }
                 --leftBin;
@@ -814,11 +1272,11 @@ void MainWindow::autoTune()
 
             // Search right for base boundary
             std::size_t rightBin = maxBin;
-            while (rightBin + 1 < frame->bins.size() && frame->bins[rightBin] > threshold) {
-                if (rightBin > 0 && rightBin + 2 < frame->bins.size()
-                    && frame->bins[rightBin] < framePeakAmp - 20.0F
-                    && frame->bins[rightBin] < frame->bins[rightBin + 1]
-                    && frame->bins[rightBin] < frame->bins[rightBin - 1]) {
+            while (rightBin + 1 < frame->binCount() && frame->binDb(rightBin) > threshold) {
+                if (rightBin > 0 && rightBin + 2 < frame->binCount()
+                    && frame->binDb(rightBin) < framePeakAmp - 20.0F
+                    && frame->binDb(rightBin) < frame->binDb(rightBin + 1)
+                    && frame->binDb(rightBin) < frame->binDb(rightBin - 1)) {
                     break;
                 }
                 ++rightBin;
@@ -1168,6 +1626,9 @@ void MainWindow::refreshMarkerLabels()
 void MainWindow::handleSpanScaleRequested(const double scaleFactor,
                                           const double anchorFrequencyHz)
 {
+    if (dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr) {
+        return;
+    }
     const double oldCenterHz = centerFrequencySpin_->frequencyHz();
     const double oldSpanHz = spanSpin_->frequencyHz();
     const double newSpanHz = std::clamp(oldSpanHz * scaleFactor, 1.0e3, 10.0e9);
@@ -1195,6 +1656,9 @@ void MainWindow::handleFrequencyPanRequested(const double centerShiftHz)
 void MainWindow::handleFrequencyRangeSelected(const double startFrequencyHz,
                                               const double stopFrequencyHz)
 {
+    if (dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr) {
+        return;
+    }
     if (!std::isfinite(startFrequencyHz) || !std::isfinite(stopFrequencyHz)
         || stopFrequencyHz <= startFrequencyHz) {
         return;
@@ -1223,6 +1687,7 @@ void MainWindow::recordPaintedFrameLatency(const std::uint64_t publicationSequen
         return;
     }
     lastLatencyPublicationSequence_ = publicationSequence;
+    ++paintedFramesInWindow_;
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     const auto nowNs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
@@ -1312,7 +1777,7 @@ void MainWindow::exportCsv()
     }
 
     exportCsvButton_->setEnabled(false);
-    fileOperationLabel_->setText(tr("正在后台导出 %1 个频点…").arg(frame->bins.size()));
+    fileOperationLabel_->setText(tr("正在后台导出 %1 个频点…").arg(frame->binCount()));
     exportWatcher_->setFuture(QtConcurrent::run([frame, filePath] {
         return SpectrumExporter::writeCsv(frame, filePath);
     }));
@@ -1394,18 +1859,23 @@ void MainWindow::showUserGuideDialog()
 void MainWindow::showAboutDialog()
 {
     QMessageBox aboutBox(this);
-    aboutBox.setWindowTitle(tr("关于 RTSA 实时频谱分析系统"));
+    aboutBox.setWindowTitle(tr("关于 SpectrumPro 实时频谱分析系统"));
     aboutBox.setTextFormat(Qt::RichText);
     aboutBox.setText(tr(
-        "<h3>RTSA 实时频谱分析仪 (Real-Time Spectrum Analyzer)</h3>"
+        "<h3>SpectrumPro - 大带宽实时频谱分析仪</h3>"
         "<p><b>版本：</b>v2.0 Industrial Edition</p>"
         "<p><b>渲染引擎：</b>Qt 6 / 高性能 CPU Raster 零拷贝双缓冲</p>"
         "<p><b>时频架构：</b>无锁环形队列 (Lock-Free SPSC) + 连续瀑布图谱 (Spectrogram)</p>"
         "<p><b>工业标准：</b>对标 Keysight / Rohde & Schwarz / Tektronix 射频仪器规范</p>"
         "<hr>"
-        "<p style='color: #888;'>Copyright &copy; 2026 RTSA Team. All rights reserved.</p>"
+        "<p style='color: #888;'>Copyright &copy; 2026 SpectrumPro Team. All rights reserved.</p>"
     ));
-    aboutBox.setIcon(QMessageBox::Information);
+    const QIcon aboutIcon(QStringLiteral(":/icons/app.png"));
+    if (!aboutIcon.isNull()) {
+        aboutBox.setIconPixmap(aboutIcon.pixmap(64, 64));
+    } else {
+        aboutBox.setIcon(QMessageBox::Information);
+    }
     aboutBox.exec();
 }
 
@@ -1630,8 +2100,15 @@ void MainWindow::buildUi()
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
 
+    mainSplitter_ = new QSplitter(Qt::Horizontal, central);
+    mainSplitter_->setObjectName(QStringLiteral("mainSplitter"));
+    mainSplitter_->setChildrenCollapsible(false);
+    mainSplitter_->setHandleWidth(6);
+
     plotSplitter_ = new QSplitter(Qt::Vertical, central);
     plotSplitter_->setObjectName(QStringLiteral("plotSplitter"));
+    plotSplitter_->setChildrenCollapsible(false);
+    plotSplitter_->setHandleWidth(6);
 
     plot_ = new SpectrumPlotWidget(plotSplitter_);
     plot_->setObjectName(QStringLiteral("spectrumPlot"));
@@ -1646,14 +2123,20 @@ void MainWindow::buildUi()
     plotSplitter_->setStretchFactor(0, 1);
     plotSplitter_->setStretchFactor(1, 1);
 
-    layout->addWidget(plotSplitter_, 1);
-    layout->addWidget(buildControlPanel());
+    controlPanel_ = buildControlPanel();
+    mainSplitter_->addWidget(plotSplitter_);
+    mainSplitter_->addWidget(controlPanel_);
+    mainSplitter_->setStretchFactor(0, 1);
+    mainSplitter_->setStretchFactor(1, 0);
+
+    layout->addWidget(mainSplitter_);
     setCentralWidget(central);
 }
 
 QWidget* MainWindow::buildControlPanel()
 {
     auto* panel = new QWidget(this);
+    panel->setObjectName(QStringLiteral("controlPanel"));
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
@@ -1697,20 +2180,24 @@ QWidget* MainWindow::buildControlPanel()
     // 2. Tab Widget with 4 Clean Functional Pages
     mainTabWidget_ = new QTabWidget(panel);
     mainTabWidget_->setObjectName(QStringLiteral("mainTabWidget"));
+    mainTabWidget_->setMinimumWidth(0);
 
     // Tab 1: 频率与幅度 (Freq & Amplitude)
     auto* freqAmpPage = new QWidget;
+    freqAmpPage->setMinimumWidth(0);
+    freqAmpPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* freqAmpLayout = new QVBoxLayout(freqAmpPage);
     freqAmpLayout->setContentsMargins(2, 4, 2, 4);
     freqAmpLayout->setSpacing(6);
     freqAmpLayout->addWidget(buildSourceGroup());
+    freqAmpLayout->addWidget(buildHardwareGroup());
     freqAmpLayout->addWidget(buildDisplayGroup());
     freqAmpLayout->addStretch(1);
 
     auto* freqAmpScroll = new QScrollArea;
     freqAmpScroll->setWidgetResizable(true);
     freqAmpScroll->setFrameShape(QFrame::NoFrame);
-    freqAmpScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    freqAmpScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     freqAmpScroll->setWidget(freqAmpPage);
     mainTabWidget_->addTab(freqAmpScroll, tr("频率与幅度"));
 
@@ -1721,6 +2208,8 @@ QWidget* MainWindow::buildControlPanel()
 
     // Tab 3: 迹线与瀑布 (Trace & Waterfall)
     auto* traceViewPage = new QWidget;
+    traceViewPage->setMinimumWidth(0);
+    traceViewPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* traceViewLayout = new QVBoxLayout(traceViewPage);
     traceViewLayout->setContentsMargins(2, 4, 2, 4);
     traceViewLayout->setSpacing(6);
@@ -1731,7 +2220,7 @@ QWidget* MainWindow::buildControlPanel()
     auto* traceViewScroll = new QScrollArea;
     traceViewScroll->setWidgetResizable(true);
     traceViewScroll->setFrameShape(QFrame::NoFrame);
-    traceViewScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    traceViewScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     traceViewScroll->setWidget(traceViewPage);
     mainTabWidget_->addTab(traceViewScroll, tr("迹线与瀑布"));
 
@@ -1746,7 +2235,10 @@ QWidget* MainWindow::buildControlPanel()
     markerLayout->addWidget(buildMarkerTableGroup());
     markerLayout->addStretch(1);
 
-    auto* markerScroll = new NoHorizontalScrollArea(mainTabWidget_);
+    auto* markerScroll = new QScrollArea(mainTabWidget_);
+    markerScroll->setWidgetResizable(true);
+    markerScroll->setFrameShape(QFrame::NoFrame);
+    markerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     markerScroll->setWidget(markerPage);
     mainTabWidget_->addTab(markerScroll, tr("标记"));
 
@@ -1770,7 +2262,9 @@ QWidget* MainWindow::buildControlPanel()
     connect(closeBtn, &QPushButton::clicked, telemetryDialog_, &QDialog::accept);
     dlgLayout->addWidget(closeBtn);
 
-    panel->setFixedWidth(340);
+    panel->setMinimumWidth(300);
+    panel->setMaximumWidth(400);
+    panel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     UnfocusedWheelFilter::installRecursively(panel);
     return panel;
 }
@@ -1789,21 +2283,25 @@ QWidget* MainWindow::buildSourceGroup()
     centerFrequencySpin_->setObjectName(QStringLiteral("centerFrequencyMHz"));
     centerFrequencySpin_->setFrequencyRangeHz(0.0, 20.0e9);
     centerFrequencySpin_->setFrequencyHz(1000.0e6);
+    centerFrequencySpin_->setKeyboardTracking(false);
 
     spanSpin_ = new FrequencySpinBox(group);
     spanSpin_->setObjectName(QStringLiteral("spanMHz"));
     spanSpin_->setFrequencyRangeHz(1.0e3, 10.0e9);
     spanSpin_->setFrequencyHz(200.0e6);
+    spanSpin_->setKeyboardTracking(false);
 
     startFrequencySpin_ = new FrequencySpinBox(group);
     startFrequencySpin_->setObjectName(QStringLiteral("startFrequencyMHz"));
     startFrequencySpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
     startFrequencySpin_->setFrequencyHz(900.0e6);
+    startFrequencySpin_->setKeyboardTracking(false);
 
     stopFrequencySpin_ = new FrequencySpinBox(group);
     stopFrequencySpin_->setObjectName(QStringLiteral("stopFrequencyMHz"));
     stopFrequencySpin_->setFrequencyRangeHz(-5.0e9, 25.0e9);
     stopFrequencySpin_->setFrequencyHz(1100.0e6);
+    stopFrequencySpin_->setKeyboardTracking(false);
 
     fftSizeCombo_ = new QComboBox(group);
     fftSizeCombo_->setObjectName(QStringLiteral("fftSize"));
@@ -1826,8 +2324,8 @@ QWidget* MainWindow::buildSourceGroup()
     noiseFloorSpin_->setSuffix(tr(" dBFS"));
 
     // Quick Span Preset Buttons Grid
-    auto* quickSpanWidget = new QWidget(group);
-    auto* quickSpanLayout = new QGridLayout(quickSpanWidget);
+    quickSpanWidget_ = new QWidget(group);
+    auto* quickSpanLayout = new QGridLayout(quickSpanWidget_);
     quickSpanLayout->setContentsMargins(0, 2, 0, 2);
     quickSpanLayout->setSpacing(4);
 
@@ -1848,7 +2346,7 @@ QWidget* MainWindow::buildSourceGroup()
     int spanCol = 0;
     int spanRow = 0;
     for (const auto& qs : quickSpans) {
-        auto* btn = new QPushButton(qs.label, quickSpanWidget);
+        auto* btn = new QPushButton(qs.label, quickSpanWidget_);
         btn->setMinimumHeight(24);
         btn->setStyleSheet(QStringLiteral(
             "QPushButton { font-size: 11px; font-weight: bold; padding: 2px 4px; background-color: #1e2631; color: #b0bec5; border: 1px solid #37474f; border-radius: 3px; } "
@@ -1867,14 +2365,92 @@ QWidget* MainWindow::buildSourceGroup()
 
     form->addRow(tr("数据源类型"), sourceKindCombo_);
     form->addRow(tr("中心频率"), centerFrequencySpin_->createCompoundWidget(group));
-    form->addRow(tr("频宽（Span）"), spanSpin_->createCompoundWidget(group));
-    form->addRow(tr("常用频宽"), quickSpanWidget);
+    form->addRow(tr("显示频宽（Span）"), spanSpin_->createCompoundWidget(group));
+    form->addRow(tr("常用频宽"), quickSpanWidget_);
     form->addRow(tr("起始频率"), startFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("终止频率"), stopFrequencySpin_->createCompoundWidget(group));
     form->addRow(tr("频点数"), fftSizeCombo_);
     form->addRow(tr("输入帧率"), sourceFrameRateSpin_);
     form->addRow(tr("噪声底"), noiseFloorSpin_);
 
+    return group;
+}
+
+QWidget* MainWindow::buildHardwareGroup()
+{
+    auto* group = new QGroupBox(tr("PL 硬件采集"), this);
+    group->setObjectName(QStringLiteral("hardwareGroup"));
+    hardwareGroup_ = group;
+    auto* form = new QFormLayout(group);
+
+    dmaModeCombo_ = new QComboBox(group);
+    dmaModeCombo_->setObjectName(QStringLiteral("dmaMode"));
+    dmaModeCombo_->addItem(tr("内部 DDS（链路自检）"), 1);
+    dmaModeCombo_->addItem(tr("RFADC0"), 2);
+    dmaModeCombo_->addItem(tr("RFADC1"), 3);
+
+    cicRateSpin_ = new QSpinBox(group);
+    cicRateSpin_->setObjectName(QStringLiteral("cicRate"));
+    cicRateSpin_->setRange(1, 8192);
+    cicRateSpin_->setValue(8);
+    cicRateSpin_->setKeyboardTracking(false);
+    cicRateSpin_->setSuffix(tr(" 倍"));
+    cicRateSpin_->setToolTip(
+        tr("1 = 旁路 CIC（宽带直通）。CIC=1、HB=0 时 FFT 输入为 312.5 MSPS，"
+           "span 为 312.5 MHz；HB 仍可继续 2^HB 抽取。"));
+
+    cicTruncSpin_ = new QSpinBox(group);
+    cicTruncSpin_->setObjectName(QStringLiteral("cicTrunc"));
+    cicTruncSpin_->setRange(0, 80);
+    cicTruncSpin_->setValue(31);
+    cicTruncSpin_->setKeyboardTracking(false);
+    cicTruncSpin_->setSuffix(tr(" 位"));
+
+    hbLevelSpin_ = new QSpinBox(group);
+    hbLevelSpin_->setObjectName(QStringLiteral("hbLevel"));
+    hbLevelSpin_->setRange(0, 6);
+    hbLevelSpin_->setValue(2);
+    hbLevelSpin_->setKeyboardTracking(false);
+    hbLevelSpin_->setSuffix(tr(" 级"));
+    hbLevelSpin_->setToolTip(tr("0=旁路，1～6 级分别对应 2～64 倍抽取。"));
+
+    maxHoldFramesSpin_ = new QSpinBox(group);
+    maxHoldFramesSpin_->setObjectName(QStringLiteral("maxHoldFrames"));
+    maxHoldFramesSpin_->setRange(1, 65535);
+    maxHoldFramesSpin_->setValue(80);
+    maxHoldFramesSpin_->setKeyboardTracking(false);
+    maxHoldFramesSpin_->setSuffix(tr(" 帧"));
+
+    ddsFrequencySpin_ = new FrequencySpinBox(group);
+    ddsFrequencySpin_->setObjectName(QStringLiteral("ddsFrequencyMHz"));
+    ddsFrequencySpin_->setFrequencyRangeHz(0.0, 625.0e6);
+    ddsFrequencySpin_->setFrequencyHz(1.5e6);
+    ddsFrequencySpin_->setKeyboardTracking(false);
+    ddsFrequencySpin_->setToolTip(
+        tr("DDS 四相 1.25 GSPS 等效采样率，可用范围 0～625 MHz。"));
+
+    hardwareSampleRateLabel_ = new QLabel(group);
+    hardwareSampleRateLabel_->setObjectName(QStringLiteral("hardwareSampleRate"));
+    hardwareSampleRateLabel_->setText(formatFrequency(9765625.0));
+    hardwareSampleRateLabel_->setToolTip(
+        tr("312.5 MHz ÷ CIC 抽取 ÷ 2^HB 级数；CIC=1 表示旁路 CIC。"
+           "1024 点复数 FFT 的 span 等于该采样率。"));
+
+    auto* note = new QLabel(
+        tr("参数实时下发到 PL；RFADC0/1 当前固定 NCO 1.7 GHz，"
+           "CIC/HB/DDS/信号来源切换会有短暂重建间隙。"
+           "312.5 MHz 直通（CIC=1/HB=0）建议 Max Hold ≥16，以降低 DMA 帧率。"), group);
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral("color: #90a4ae; font-size: 11px;"));
+
+    form->addRow(tr("信号来源"), dmaModeCombo_);
+    form->addRow(tr("CIC 抽取"), cicRateSpin_);
+    form->addRow(tr("CIC 截位"), cicTruncSpin_);
+    form->addRow(tr("HB 级数"), hbLevelSpin_);
+    form->addRow(tr("Max Hold"), maxHoldFramesSpin_);
+    form->addRow(tr("DDS 频率"), ddsFrequencySpin_->createCompoundWidget(group));
+    form->addRow(tr("采样率 / Span"), hardwareSampleRateLabel_);
+    form->addRow(note);
     return group;
 }
 
@@ -2084,12 +2660,14 @@ QWidget* MainWindow::buildTraceGroup()
     auto* form = new QFormLayout(group);
 
     traceModeCombo_ = new QComboBox(group);
+    traceModeCombo_->setObjectName(QStringLiteral("traceMode"));
     traceModeCombo_->addItem(tr("实时刷新"), static_cast<int>(TraceMode::ClearWrite));
     traceModeCombo_->addItem(tr("平均"), static_cast<int>(TraceMode::Average));
     traceModeCombo_->addItem(tr("最大保持"), static_cast<int>(TraceMode::MaxHold));
     traceModeCombo_->addItem(tr("最小保持"), static_cast<int>(TraceMode::MinHold));
 
     averageCountSpin_ = new QSpinBox(group);
+    averageCountSpin_->setObjectName(QStringLiteral("averageCount"));
     averageCountSpin_->setRange(1, 1024);
     averageCountSpin_->setValue(16);
     averageCountSpin_->setEnabled(false);
@@ -2117,7 +2695,9 @@ QWidget* MainWindow::buildMarkerGroup()
         activeMarkerCombo_->addItem(QStringLiteral("M%1").arg(index + 1U),
                                     static_cast<int>(index));
     }
-    activeMarkerCombo_->setFixedWidth(80);
+    activeMarkerCombo_->setMinimumWidth(64);
+    activeMarkerCombo_->setMaximumWidth(96);
+    activeMarkerCombo_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     markerEnabledCheck_ = new QCheckBox(tr("启用 M1"), markerSelectRow);
     markerEnabledCheck_->setObjectName(QStringLiteral("markerEnabled"));
@@ -2477,20 +3057,45 @@ void MainWindow::connectUi()
         pipeline_.resetTrace();
     });
 
-    connect(centerFrequencySpin_, &QDoubleSpinBox::editingFinished,
-            this, &MainWindow::applySourceConfiguration);
-    connect(spanSpin_, &QDoubleSpinBox::editingFinished,
-            this, &MainWindow::applySourceConfiguration);
-    connect(startFrequencySpin_, &QDoubleSpinBox::editingFinished,
-            this, &MainWindow::applyStartStopConfiguration);
-    connect(stopFrequencySpin_, &QDoubleSpinBox::editingFinished,
-            this, &MainWindow::applyStartStopConfiguration);
+    connect(centerFrequencySpin_, &FrequencySpinBox::frequencyChanged,
+            this, [this](double) { applySourceConfiguration(); });
+    connect(spanSpin_, &FrequencySpinBox::frequencyChanged,
+            this, [this](double) { applySourceConfiguration(); });
+    connect(startFrequencySpin_, &FrequencySpinBox::frequencyChanged,
+            this, [this](double) { applyStartStopConfiguration(); });
+    connect(stopFrequencySpin_, &FrequencySpinBox::frequencyChanged,
+            this, [this](double) { applyStartStopConfiguration(); });
     connect(sourceFrameRateSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     connect(noiseFloorSpin_, &QDoubleSpinBox::editingFinished,
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     connect(sourceKindCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::handleSourceKindChanged);
+    connect(dmaModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+        updateHardwareUiState();
+        applyNonFrequencySourceConfiguration();
+    });
+    connect(cicRateSpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this](int) {
+        if (cicRateSpin_->value() > 1 && cicRateSpin_->value() < 4) {
+            const QSignalBlocker blocker(cicRateSpin_);
+            cicRateSpin_->setValue(4);
+        }
+        updateHardwareUiState();
+        applyNonFrequencySourceConfiguration();
+    });
+    connect(cicTruncSpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(hbLevelSpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this](int) {
+        updateHardwareUiState();
+        applyNonFrequencySourceConfiguration();
+    });
+    connect(maxHoldFramesSpin_, qOverload<int>(&QSpinBox::valueChanged),
+            this, &MainWindow::applyNonFrequencySourceConfiguration);
+    connect(ddsFrequencySpin_, &FrequencySpinBox::frequencyChanged,
+            this, [this](double) { applyNonFrequencySourceConfiguration(); });
     connect(fftSizeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, &MainWindow::applyNonFrequencySourceConfiguration);
     connect(traceModeCombo_, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -2566,8 +3171,12 @@ void MainWindow::loadSettings()
     if (!result.warning.isEmpty()) {
         qWarning().noquote() << result.warning;
     }
-    if (!settings.windowGeometry.isEmpty() && !restoreGeometry(settings.windowGeometry)) {
-        qWarning() << "Ignoring invalid saved window geometry.";
+    if (!settings.windowGeometry.isEmpty()) {
+        if (restoreGeometry(settings.windowGeometry)) {
+            restoredGeometry_ = true;
+        } else {
+            qWarning() << "Ignoring invalid saved window geometry.";
+        }
     }
 
     centerFrequencySpin_->setFrequencyHz(settings.centerFrequencyMHz * 1.0e6);
@@ -2702,6 +3311,180 @@ void MainWindow::saveSettings() const
     }
 }
 
+QScreen* MainWindow::currentScreen() const
+{
+    if (const QWindow* handle = windowHandle()) {
+        if (QScreen* screen = handle->screen()) {
+            return screen;
+        }
+    }
+    if (QScreen* screen = QGuiApplication::screenAt(frameGeometry().center())) {
+        return screen;
+    }
+    return QGuiApplication::primaryScreen();
+}
+
+void MainWindow::applyInitialWindowGeometry()
+{
+    if (isFullScreen() || isMaximized()) {
+        return;
+    }
+
+    QScreen* screen = currentScreen();
+    if (!screen) {
+        return;
+    }
+
+    QRect available = screen->availableGeometry().adjusted(8, 8, -8, -8);
+    if (available.width() < 320 || available.height() < 240) {
+        available = screen->availableGeometry();
+    }
+
+    bool restoredGeometryVisible = false;
+    if (restoredGeometry_) {
+        const QRect current = geometry();
+        const int requiredWidth = std::min(320, current.width());
+        const int requiredHeight = std::min(200, current.height());
+        for (const QScreen* candidate : QGuiApplication::screens()) {
+            const QRect intersection = candidate->availableGeometry().intersected(current);
+            if (intersection.width() >= requiredWidth
+                && intersection.height() >= requiredHeight) {
+                restoredGeometryVisible = true;
+                break;
+            }
+        }
+    }
+
+    if (!restoredGeometryVisible) {
+        const QSize targetSize = QSize(1440, 860).boundedTo(available.size());
+        resize(targetSize);
+        QRect target(QPoint(0, 0), targetSize);
+        target.moveCenter(available.center());
+        move(target.topLeft());
+        return;
+    }
+
+    ensureWindowWithinScreen();
+}
+
+void MainWindow::ensureWindowWithinScreen()
+{
+    if (isFullScreen() || isMaximized()) {
+        return;
+    }
+
+    QScreen* screen = currentScreen();
+    if (!screen) {
+        return;
+    }
+
+    QRect available = screen->availableGeometry().adjusted(8, 8, -8, -8);
+    if (available.width() < 320 || available.height() < 240) {
+        available = screen->availableGeometry();
+    }
+
+    const QRect initialFrame = frameGeometry();
+    const QSize frameChrome = initialFrame.size() - size();
+    const QSize maximumClientSize(
+        std::max(1, available.width() - frameChrome.width()),
+        std::max(1, available.height() - frameChrome.height()));
+    const QSize targetClientSize = size().boundedTo(maximumClientSize);
+    if (targetClientSize != size()) {
+        resize(targetClientSize);
+    }
+
+    const QRect currentFrame = frameGeometry();
+    const int maxX = std::max(available.left(),
+                              available.right() - currentFrame.width() + 1);
+    const int maxY = std::max(available.top(),
+                              available.bottom() - currentFrame.height() + 1);
+    const QPoint targetFramePosition(
+        std::clamp(currentFrame.left(), available.left(), maxX),
+        std::clamp(currentFrame.top(), available.top(), maxY));
+    if (targetFramePosition != currentFrame.topLeft()) {
+        const QPoint frameDelta = targetFramePosition - currentFrame.topLeft();
+        move(pos() + frameDelta);
+    }
+}
+
+void MainWindow::applyResponsiveLayout()
+{
+    if (!mainSplitter_ || !controlPanel_) {
+        return;
+    }
+
+    const bool compact = width() < 1180 || height() > width() * 1.15;
+    if (layoutInitialized_ && compact == compactLayout_) {
+        return;
+    }
+
+    layoutInitialized_ = true;
+    compactLayout_ = compact;
+
+    if (compact) {
+        mainSplitter_->setOrientation(Qt::Vertical);
+        controlPanel_->setMinimumWidth(0);
+        controlPanel_->setMaximumWidth(QWIDGETSIZE_MAX);
+        controlPanel_->setMinimumHeight(220);
+        controlPanel_->setMaximumHeight(QWIDGETSIZE_MAX);
+        controlPanel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        const int availableHeight = mainSplitter_->height() > 0
+            ? mainSplitter_->height() : height();
+        const int panelHeight = std::clamp(availableHeight * 36 / 100, 220, 420);
+        mainSplitter_->setSizes({
+            std::max(200, availableHeight - panelHeight - mainSplitter_->handleWidth()),
+            panelHeight
+        });
+    } else {
+        mainSplitter_->setOrientation(Qt::Horizontal);
+        controlPanel_->setMinimumHeight(0);
+        controlPanel_->setMaximumHeight(QWIDGETSIZE_MAX);
+        controlPanel_->setMinimumWidth(300);
+        controlPanel_->setMaximumWidth(400);
+        controlPanel_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+
+        const int availableWidth = mainSplitter_->width() > 0
+            ? mainSplitter_->width() : width();
+        const int panelWidth = std::clamp(availableWidth * 23 / 100, 300, 400);
+        mainSplitter_->setSizes({
+            std::max(200, availableWidth - panelWidth - mainSplitter_->handleWidth()),
+            panelWidth
+        });
+    }
+
+    mainSplitter_->setStretchFactor(0, 1);
+    mainSplitter_->setStretchFactor(1, 0);
+    configureFormWrapPolicy(compact);
+}
+
+void MainWindow::configureFormWrapPolicy(const bool compact)
+{
+    if (!controlPanel_) {
+        return;
+    }
+
+    const auto forms = controlPanel_->findChildren<QFormLayout*>();
+    for (QFormLayout* form : forms) {
+        form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+        form->setRowWrapPolicy(compact
+            ? QFormLayout::WrapAllRows
+            : QFormLayout::WrapLongRows);
+        form->invalidate();
+    }
+    controlPanel_->updateGeometry();
+}
+
+void MainWindow::scheduleResponsiveLayout()
+{
+    if (layoutUpdateTimer_) {
+        layoutUpdateTimer_->start();
+    } else {
+        applyResponsiveLayout();
+    }
+}
+
 void MainWindow::loadSimulationConfiguration(const SimulationConfig& config)
 {
     if (!simulationControl_) {
@@ -2821,6 +3604,8 @@ void MainWindow::ensureSimulationTabCreated()
     }
 
     auto* simPage = new QWidget;
+    simPage->setMinimumWidth(0);
+    simPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* simLayout = new QVBoxLayout(simPage);
     simLayout->setContentsMargins(2, 4, 2, 4);
     simLayout->setSpacing(6);
@@ -2830,7 +3615,7 @@ void MainWindow::ensureSimulationTabCreated()
     auto* simScroll = new QScrollArea;
     simScroll->setWidgetResizable(true);
     simScroll->setFrameShape(QFrame::NoFrame);
-    simScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    simScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     simScroll->setWidget(simPage);
     simulationTab_ = simScroll;
     simulationTabIndex_ = mainTabWidget_->insertTab(1, simScroll, tr("模拟信号源"));
@@ -2860,6 +3645,7 @@ void MainWindow::ensureSimulationTabCreated()
         }
         applyNonFrequencySourceConfiguration();
     });
+    configureFormWrapPolicy(compactLayout_);
 }
 
 void MainWindow::updateSourceUiState()
@@ -2890,6 +3676,127 @@ void MainWindow::updateSourceUiState()
     }
     if (noiseFloorSpin_) {
         noiseFloorSpin_->setEnabled(isSim);
+    }
+    updateHardwareUiState();
+}
+
+void MainWindow::updateHardwareUiState()
+{
+    const bool isDma = dynamic_cast<DmaSpectrumSource*>(source_.get()) != nullptr;
+    if (hardwareGroup_) {
+        hardwareGroup_->setVisible(isDma);
+    }
+
+    if (dmaModeCombo_) {
+        dmaModeCombo_->setEnabled(isDma);
+    }
+    for (QSpinBox* spin : { cicRateSpin_, cicTruncSpin_, hbLevelSpin_,
+                            maxHoldFramesSpin_ }) {
+        if (spin) {
+            spin->setEnabled(isDma);
+        }
+    }
+    if (cicTruncSpin_) {
+        cicTruncSpin_->setEnabled(
+            isDma && (!cicRateSpin_ || cicRateSpin_->value() != 1));
+    }
+    const bool ddsSelected = dmaModeCombo_
+        && dmaModeCombo_->currentData().toInt() == 1;
+    const int hardwareMode = dmaModeCombo_
+        ? dmaModeCombo_->currentData().toInt()
+        : 1;
+    const bool adcCenterLocked = isDma && hardwareMode >= 2;
+    if (centerFrequencySpin_) {
+        if (adcCenterLocked && lastDmaMode_ < 2) {
+            centerBeforeAdcHz_ = centerFrequencySpin_->frequencyHz();
+        }
+        if (adcCenterLocked) {
+            const QSignalBlocker blocker(centerFrequencySpin_);
+            centerFrequencySpin_->setFrequencyHz(kRfadcNcoCenterHz);
+        } else if (lastDmaMode_ >= 2) {
+            const QSignalBlocker blocker(centerFrequencySpin_);
+            centerFrequencySpin_->setFrequencyHz(centerBeforeAdcHz_);
+        }
+        centerFrequencySpin_->setEnabled(!adcCenterLocked);
+    }
+    lastDmaMode_ = isDma ? hardwareMode : 1;
+
+    if (ddsFrequencySpin_) {
+        ddsFrequencySpin_->setEnabled(isDma && ddsSelected);
+    }
+
+    const double hardwareSpanHz = (cicRateSpin_ && hbLevelSpin_)
+        ? plDecimatedSampleRateHz(
+              static_cast<std::uint16_t>(cicRateSpin_->value()),
+              static_cast<std::uint8_t>(hbLevelSpin_->value()))
+        : 9765625.0;
+
+    if (spanSpin_) {
+        if (isDma) {
+            if (!lastUiWasDma_) {
+                spanBeforeDmaHz_ = spanSpin_->frequencyHz();
+            }
+            {
+                const QSignalBlocker blocker(spanSpin_);
+                spanSpin_->setFrequencyRangeHz(
+                    std::min(1.0, hardwareSpanHz),
+                    std::max(10.0e9, hardwareSpanHz));
+                spanSpin_->setFrequencyHz(hardwareSpanHz);
+            }
+            spanSpin_->setEnabled(false);
+            fullRangeSpanHz_ = hardwareSpanHz;
+        } else {
+            if (lastUiWasDma_) {
+                const QSignalBlocker blocker(spanSpin_);
+                spanSpin_->setFrequencyRangeHz(1.0e3, 10.0e9);
+                spanSpin_->setFrequencyHz(spanBeforeDmaHz_);
+            }
+            spanSpin_->setEnabled(true);
+            fullRangeSpanHz_ = spanBeforeDmaHz_;
+        }
+    }
+    if (startFrequencySpin_) {
+        startFrequencySpin_->setEnabled(!isDma);
+    }
+    if (stopFrequencySpin_) {
+        stopFrequencySpin_->setEnabled(!isDma);
+    }
+    if (quickSpanWidget_) {
+        quickSpanWidget_->setEnabled(!isDma);
+    }
+
+    // DMA log frames already carry the PL trace. The PS trace processor is
+    // intentionally bypassed for them, so these controls must not pretend to
+    // change DMA data.
+    if (traceModeCombo_) {
+        traceModeCombo_->setEnabled(!isDma);
+    }
+    if (resetTraceButton_) {
+        resetTraceButton_->setEnabled(!isDma);
+    }
+    if (averageCountSpin_) {
+        const bool averageSelected = traceModeCombo_
+            && traceModeCombo_->currentData().toInt()
+                == static_cast<int>(TraceMode::Average);
+        averageCountSpin_->setEnabled(!isDma && averageSelected);
+    }
+
+    if (isDma || lastUiWasDma_ != isDma) {
+        synchronizeStartStopFromCenterSpan();
+    }
+    lastUiWasDma_ = isDma;
+
+    if (hardwareSampleRateLabel_ && cicRateSpin_ && hbLevelSpin_) {
+        const double sampleRate = hardwareSpanHz;
+        QString rateText = QString::number(sampleRate / 1.0e6, 'f', 6);
+        while (rateText.endsWith(QLatin1Char('0'))) {
+            rateText.chop(1);
+        }
+        if (rateText.endsWith(QLatin1Char('.'))) {
+            rateText.chop(1);
+        }
+        hardwareSampleRateLabel_->setText(
+            tr("%1 MHz（1024 点复数 FFT Span）").arg(rateText));
     }
 }
 

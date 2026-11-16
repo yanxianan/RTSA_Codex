@@ -15,7 +15,8 @@
 #include <errno.h>
 #include "rtsa_dma_uapi.h"
 
-#define FFT_POINTS 1024
+#define DEFAULT_BIN_COUNT 1024
+#define SPECTRUM_HEADER_BYTES 64
 
 static volatile bool g_running = true;
 
@@ -31,9 +32,29 @@ static uint64_t get_time_ns(void) {
 }
 
 // 打印简易控制台 ASCII 频谱柱状图
-static void print_ascii_spectrum(const int32_t *data, int num_points) {
-    int max_val = -0x7FFFFFFF;
-    int min_val = 0x7FFFFFFF;
+static uint16_t read_le16(const uint8_t *data) {
+    return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+}
+
+static uint32_t read_le32(const uint8_t *data) {
+    return (uint32_t)data[0]
+        | ((uint32_t)data[1] << 8)
+        | ((uint32_t)data[2] << 16)
+        | ((uint32_t)data[3] << 24);
+}
+
+static uint64_t read_le64(const uint8_t *data) {
+    uint64_t value = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+        value |= (uint64_t)data[i] << (i * 8);
+    }
+    return value;
+}
+
+static void print_ascii_spectrum(const int16_t *data, int num_points,
+                                 double offset_db) {
+    int max_val = -32768;
+    int min_val = 32767;
     int peak_idx = 0;
 
     for (int i = 0; i < num_points; i++) {
@@ -46,9 +67,10 @@ static void print_ascii_spectrum(const int32_t *data, int num_points) {
         }
     }
 
-    printf("\n>>> [1024点 FFT 频域峰值分析] <<<\n");
-    printf("    正弦波谱线峰值 (Peak) : %d (位于 Bin #%d / 1024)\n", max_val, peak_idx);
-    printf("    底噪均值估计 (Noise) : %d\n", min_val);
+    printf("\n>>> [%d点 FFT 频域峰值分析] <<<\n", num_points);
+    printf("    谱线峰值 (Peak) : %.2f dBFS (位于 Bin #%d / %d)\n",
+           max_val * 0.01 + offset_db, peak_idx, num_points);
+    printf("    底噪估计 (Noise) : %.2f dBFS\n", min_val * 0.01 + offset_db);
     printf("    频域 ASCII 预览 (32 柱):\n    ");
 
     // 将 1024 点压缩为 32 个柱子打印
@@ -59,17 +81,17 @@ static void print_ascii_spectrum(const int32_t *data, int num_points) {
             int val = data[b * step + i];
             if (val > bin_max) bin_max = val;
         }
-        if (bin_max >= max_val * 0.8 && max_val > 1000) {
+        if (bin_max >= max_val - 300) {
             printf("^"); // 峰值标记
-        } else if (bin_max > (max_val - min_val) * 0.5 + min_val) {
+        } else if (bin_max > (max_val - min_val) / 2 + min_val) {
             printf("|");
-        } else if (bin_max > (max_val - min_val) * 0.2 + min_val) {
+        } else if (bin_max > (max_val - min_val) / 5 + min_val) {
             printf(":");
         } else {
             printf(".");
         }
     }
-    printf("\n    0................................1023\n\n");
+    printf("\n    0................................%d\n\n", num_points - 1);
 }
 
 int main(int argc, char *argv[]) {
@@ -98,10 +120,18 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    total_map_size = (size_t)RTSA_RING_BUFFER_COUNT * RTSA_BUFFER_SIZE;
+    total_map_size = (size_t)RTSA_RING_BUFFER_COUNT * RTSA_SLOT_SIZE;
     map_base = mmap(NULL, total_map_size, PROT_READ, MAP_SHARED, fd, 0);
     if (map_base == MAP_FAILED) {
         perror("[-] mmap 内存映射失败");
+        close(fd);
+        return -1;
+    }
+
+    __u32 frame_size = SPECTRUM_HEADER_BYTES + DEFAULT_BIN_COUNT * 2;
+    if (ioctl(fd, RTSA_IOC_SET_FRAME_SIZE, &frame_size) < 0) {
+        perror("[-] 设置帧长失败");
+        munmap(map_base, total_map_size);
         close(fd);
         return -1;
     }
@@ -145,13 +175,39 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        void *slot_ptr = (char *)map_base + (size_t)info.index * RTSA_BUFFER_SIZE;
-        const int32_t *fft_data = (const int32_t *)slot_ptr;
+        uint8_t *slot_ptr = (uint8_t *)map_base + (size_t)info.index * RTSA_SLOT_SIZE;
+        if (info.size < SPECTRUM_HEADER_BYTES) {
+            fprintf(stderr, "[-] 短帧: %u bytes\n", info.size);
+            ioctl(fd, RTSA_IOC_QUEUE, &info.index);
+            continue;
+        }
+
+        uint32_t magic = read_le32(slot_ptr + 0x00);
+        uint16_t version = read_le16(slot_ptr + 0x04);
+        uint32_t frame_bytes = read_le32(slot_ptr + 0x08);
+        uint32_t bin_count = read_le32(slot_ptr + 0x30);
+        uint8_t trace_mode = slot_ptr[0x34];
+        uint16_t accumulation_frames = read_le16(slot_ptr + 0x35);
+        uint64_t span_hz = read_le64(slot_ptr + 0x28);
+        int32_t calibration_q16_16 = (int32_t)read_le32(slot_ptr + 0x38);
+        uint8_t data_format = slot_ptr[0x3C];
+
+        if (magic != 0x52545341U || version != 1U || data_format != 0U
+            || bin_count == 0U || bin_count > 65536U
+            || frame_bytes != SPECTRUM_HEADER_BYTES + bin_count * 2U
+            || info.size < frame_bytes) {
+            fprintf(stderr, "[-] 帧头错误: magic=%08x version=%u format=%u bins=%u frame=%u size=%u\n",
+                    magic, version, data_format, bin_count, frame_bytes, info.size);
+            ioctl(fd, RTSA_IOC_QUEUE, &info.index);
+            continue;
+        }
+
+        const int16_t *fft_data = (const int16_t *)(slot_ptr + SPECTRUM_HEADER_BYTES);
 
         // 抓当前帧最大值位置（在归还槽位前完成读取）
         int cur_peak = 0;
         int cur_max = -0x7FFFFFFF;
-        for (int i = 0; i < FFT_POINTS; i++) {
+        for (int i = 0; i < (int)bin_count; i++) {
             if (fft_data[i] > cur_max) {
                 cur_max = fft_data[i];
                 cur_peak = i;
@@ -161,7 +217,11 @@ int main(int argc, char *argv[]) {
         if (first_frame) {
             first_frame = false;
             last_seq = info.sequence;
-            print_ascii_spectrum(fft_data, FFT_POINTS);
+            printf("[+] 帧头: magic=RTSA version=%u frame=%u bytes bins=%u trace=%u accum=%u span=%.3f MHz\n",
+                   version, frame_bytes, bin_count, trace_mode,
+                   accumulation_frames, (double)span_hz / 1.0e6);
+            print_ascii_spectrum(fft_data, bin_count,
+                                 calibration_q16_16 / 65536.0);
             printf("--------------------------------------------------------------------\n");
             printf("%-10s %-12s %-12s %-10s %-12s %-10s\n", 
                    "时间", "实时帧率", "真实带宽", "点数/帧", "谱线峰值点", "丢帧/溢出");
@@ -176,8 +236,7 @@ int main(int argc, char *argv[]) {
         if (info.status != 0) dropped_frames++;
 
         total_frames++;
-        // 真实单帧有效载荷：1024 点 x 4 字节 = 4096 字节
-        size_t real_frame_bytes = FFT_POINTS * sizeof(int32_t);
+        size_t real_frame_bytes = frame_bytes;
         total_bytes += real_frame_bytes;
         interval_frames++;
 
@@ -203,7 +262,7 @@ int main(int argc, char *argv[]) {
                    time_str,
                    fps,
                    mbps,
-                   FFT_POINTS,
+                   (int)bin_count,
                    cur_peak,
                    (unsigned long long)dropped_frames);
             fflush(stdout);

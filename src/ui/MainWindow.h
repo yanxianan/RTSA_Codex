@@ -25,6 +25,9 @@ class QDoubleSpinBox;
 class FrequencySpinBox;
 class QLabel;
 class QPushButton;
+class QResizeEvent;
+class QScreen;
+class QShowEvent;
 class QSpinBox;
 class QSplitter;
 class QTabWidget;
@@ -46,6 +49,15 @@ public:
                         bool settingsEnabled = true,
                         const SimulationConfig* initialSimulation = nullptr);
     ~MainWindow() override;
+
+    bool setSpectrumRenderMode(const QString& mode);
+    QString spectrumRenderMode() const;
+    void setDisplayRefreshRate(int fps);
+    int displayRefreshRate() const noexcept;
+    void setRenderDiagnosticsEnabled(bool enabled);
+    bool renderDiagnosticsEnabled() const noexcept;
+    bool setRenderBenchmarkMode(const QString& mode);
+    QString renderBenchmarkMode() const;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -106,6 +118,8 @@ private slots:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     void buildUi();
@@ -113,6 +127,7 @@ private:
     void buildStatusBar();
     QWidget* buildControlPanel();
     QWidget* buildSourceGroup();
+    QWidget* buildHardwareGroup();
     QWidget* buildDisplayGroup();
     QWidget* buildWaterfallGroup();
     QWidget* buildSimulationGroup();
@@ -125,8 +140,17 @@ private:
     void loadSettings();
     void loadSimulationConfiguration(const SimulationConfig& config);
     void saveSettings() const;
+    void applyInitialWindowGeometry();
+    void applyResponsiveLayout();
+    void configureFormWrapPolicy(bool compact);
+    void ensureWindowWithinScreen();
+    QScreen* currentScreen() const;
+    void scheduleResponsiveLayout();
+    void refreshRenderBenchmark();
+    SpectrumFramePtr createBenchmarkFrame(bool advancePhase);
     void updateButtonStates(SourceState state);
     void updateSourceUiState();
+    void updateHardwareUiState();
     void ensureSimulationTabCreated();
     void refreshMarkerLabels();
     void configureSourceFromUi();
@@ -141,12 +165,24 @@ private:
     SpectrumPlotWidget* plot_ = nullptr;
     WaterfallPlotWidget* waterfallPlot_ = nullptr;
     QSplitter* plotSplitter_ = nullptr;
+    QSplitter* mainSplitter_ = nullptr;
+    QWidget* controlPanel_ = nullptr;
+    QTimer* layoutUpdateTimer_ = nullptr;
     QTimer* renderTimer_ = nullptr;
     QTimer* statisticsTimer_ = nullptr;
 
     QComboBox* sourceKindCombo_ = nullptr;
+    QWidget* hardwareGroup_ = nullptr;
+    QComboBox* dmaModeCombo_ = nullptr;
+    QSpinBox* cicRateSpin_ = nullptr;
+    QSpinBox* cicTruncSpin_ = nullptr;
+    QSpinBox* hbLevelSpin_ = nullptr;
+    QSpinBox* maxHoldFramesSpin_ = nullptr;
+    FrequencySpinBox* ddsFrequencySpin_ = nullptr;
+    QLabel* hardwareSampleRateLabel_ = nullptr;
     FrequencySpinBox* centerFrequencySpin_ = nullptr;
     FrequencySpinBox* spanSpin_ = nullptr;
+    QWidget* quickSpanWidget_ = nullptr;
     FrequencySpinBox* startFrequencySpin_ = nullptr;
     FrequencySpinBox* stopFrequencySpin_ = nullptr;
     QComboBox* fftSizeCombo_ = nullptr;
@@ -248,19 +284,45 @@ private:
 
     QFutureWatcher<ExportResult>* exportWatcher_ = nullptr;
     bool settingsEnabled_ = true;
+    bool restoredGeometry_ = false;
+    bool layoutInitialized_ = false;
+    bool compactLayout_ = false;
+    bool screenSignalsConnected_ = false;
+    bool uiEnvironmentLogged_ = false;
+    bool renderDiagnosticsEnabled_ = false;
+    int displayRefreshRate_ = 100;
+    enum class RenderBenchmarkMode {
+        Off,
+        Static,
+        Trace,
+        Waterfall,
+        Mixed
+    };
+    RenderBenchmarkMode renderBenchmarkMode_ = RenderBenchmarkMode::Off;
+    SpectrumFramePtr benchmarkBaseFrame_;
+    std::uint64_t benchmarkSequence_ = 0;
+    double benchmarkPhase_ = 0.0;
+    bool benchmarkStaticFrameSent_ = false;
     double fullRangeCenterHz_ = 1.0e9;
     double fullRangeSpanHz_ = 200.0e6;
+    double spanBeforeDmaHz_ = 200.0e6;
+    bool lastUiWasDma_ = false;
+    double centerBeforeAdcHz_ = 1.0e9;
+    int lastDmaMode_ = 1;
 
     std::uint64_t lastDisplayedPublicationSequence_ = 0;
     std::uint64_t lastLatencyPublicationSequence_ = 0;
     std::uint64_t displayedFramesInWindow_ = 0;
+    std::uint64_t paintedFramesInWindow_ = 0;
     std::uint64_t displayedFramesTotal_ = 0;
     std::uint64_t displaySkippedFrames_ = 0;
     double displayFramesPerSecond_ = 0.0;
+    double paintedFramesPerSecond_ = 0.0;
     std::array<double, 256> displayLatenciesMs_ {};
     std::size_t displayLatencyCount_ = 0;
     std::size_t displayLatencyWriteIndex_ = 0;
     QElapsedTimer displayRateTimer_;
+    QElapsedTimer paintedRateTimer_;
     QElapsedTimer markerUpdateTimer_;
     QString lastSourceError_;
     QString lastSourceErrorTime_;

@@ -27,7 +27,11 @@ bool SpectrumPipeline::submit(const SpectrumFramePtr& frame)
         return false;
     }
 
-    auto processed = traceProcessor_.process(frame);
+    // DMA frames already contain a PL-detected trace. Do not apply a second
+    // Max Hold/Average stage in the PS.
+    auto processed = frame->usesLogBins()
+        ? frame
+        : traceProcessor_.process(frame);
     if (!processed) {
         processingDrops_.fetch_add(1, std::memory_order_relaxed);
         recordDuration();

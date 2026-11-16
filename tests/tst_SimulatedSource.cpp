@@ -1,5 +1,6 @@
 #include "core/FrequencyMapper.h"
 #include "core/SpectrumPipeline.h"
+#include "sources/DmaSpectrumSource.h"
 #include "sources/SimulatedSpectrumSource.h"
 #include "sources/SpectrumSourceFactory.h"
 

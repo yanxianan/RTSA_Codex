@@ -44,6 +44,8 @@ struct rtsa_dma_dev {
     void *dma_base_vaddr;       // 大块连续内存的 CPU 虚拟基址
     dma_addr_t dma_base_paddr;  // 大块连续内存的 DMA 物理基址
     size_t dma_total_size;      // 总大小
+    __u32 frame_size;           // 每帧实际 DMA 长度
+    struct rtsa_stats stats;
 
     // 环形缓冲队列索引与同步
     wait_queue_head_t rx_wait;
@@ -67,12 +69,15 @@ static void rtsa_dma_rx_callback(void *param) {
     __u32 next_head;
     struct dma_tx_state state;
     enum dma_status dma_stat;
-    size_t actual_size = RTSA_BUFFER_SIZE;
+    size_t actual_size = rtsa->frame_size;
+    bool dma_error = false;
 
     // 获取实际传输长度（若 PL 产生 TLAST 短包传输）
     dma_stat = dmaengine_tx_status(rtsa->rx_chan, slot->cookie, &state);
-    if (dma_stat != DMA_ERROR && state.residue <= RTSA_BUFFER_SIZE) {
-        actual_size = RTSA_BUFFER_SIZE - state.residue;
+    if (dma_stat == DMA_ERROR) {
+        dma_error = true;
+    } else if (state.residue <= rtsa->frame_size) {
+        actual_size = rtsa->frame_size - state.residue;
     }
 
     spin_lock_irqsave(&rtsa->lock, flags);
@@ -85,12 +90,24 @@ static void rtsa_dma_rx_callback(void *param) {
     slot->info.sequence = ++rtsa->frame_seq;
     slot->info.timestamp_ns = ktime_get_ns();
     slot->info.size = actual_size;
+    slot->info.status = 0;
+    if (dma_error) {
+        slot->info.status |= 1U << 2U;
+        rtsa->stats.dma_errors++;
+    }
+    if (actual_size < rtsa->frame_size) {
+        slot->info.status |= 1U << 1U;
+        rtsa->stats.short_frames++;
+    }
     slot->state = SLOT_STATE_COMPLETED;
+    rtsa->stats.completed_frames++;
+    rtsa->stats.completed_bytes += actual_size;
 
     // 环形完成队列：写入完成槽号并进行溢出检测
     next_head = (rtsa->completed_head + 1) % RTSA_RING_BUFFER_COUNT;
     if (next_head == rtsa->completed_tail) {
-        slot->info.status = 1; // 队列溢出（上位机未及时消费）
+        slot->info.status |= 1U << 0U; // 队列溢出（上位机未及时消费）
+        rtsa->stats.queue_overflows++;
         dev_warn_ratelimited(&rtsa->pdev->dev,
                              "Ring buffer overflow, slot %u frame dropped\n", slot->index);
         // 关键修复：既然上位机完成队列已满，必须立刻将该 slot 重新归还给 DMA 硬件继续接收！
@@ -100,7 +117,6 @@ static void rtsa_dma_rx_callback(void *param) {
         rtsa_submit_rx_slot(rtsa, slot->index);
         return;
     } else {
-        slot->info.status = 0;
         rtsa->completed_queue[rtsa->completed_head] = slot->index;
         rtsa->completed_head = next_head;
     }
@@ -122,7 +138,7 @@ static int rtsa_submit_rx_slot(struct rtsa_dma_dev *rtsa, __u32 slot_idx) {
     desc = dmaengine_prep_slave_single(
         rtsa->rx_chan,
         slot->paddr,
-        RTSA_BUFFER_SIZE,
+        rtsa->frame_size,
         DMA_DEV_TO_MEM,
         DMA_PREP_INTERRUPT | DMA_CTRL_ACK
     );
@@ -203,9 +219,17 @@ static long rtsa_dma_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
             spin_unlock_irqrestore(&rtsa->lock, flags);
             return -EBUSY;
         }
+        if (rtsa->frame_size < 64U || rtsa->frame_size > RTSA_SLOT_SIZE) {
+            spin_unlock_irqrestore(&rtsa->lock, flags);
+            return -EINVAL;
+        }
         rtsa->is_running = true;
         rtsa->completed_head = 0;
         rtsa->completed_tail = 0;
+        memset(&rtsa->stats, 0, sizeof(rtsa->stats));
+        rtsa->stats.frame_size = rtsa->frame_size;
+        rtsa->stats.ring_count = RTSA_RING_BUFFER_COUNT;
+        rtsa->frame_seq = 0;
         for (i = 0; i < RTSA_RING_BUFFER_COUNT; i++) {
             rtsa->slots[i].state = SLOT_STATE_FREE;
         }
@@ -258,8 +282,20 @@ static long rtsa_dma_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
         rtsa->slots[slot_idx].state = SLOT_STATE_FREE;
         spin_unlock_irqrestore(&rtsa->lock, flags);
 
-        if (copy_to_user((void __user *)arg, &info, sizeof(info)))
+        if (copy_to_user((void __user *)arg, &info, sizeof(info))) {
+            unsigned long requeue_flags;
+            bool requeue = false;
+
+            // The completion queue entry has already been consumed. If the
+            // userspace copy fails, return the slot to the DMA engine so a
+            // bad user pointer cannot permanently remove a ring entry.
+            spin_lock_irqsave(&rtsa->lock, requeue_flags);
+            requeue = rtsa->is_running;
+            spin_unlock_irqrestore(&rtsa->lock, requeue_flags);
+            if (requeue)
+                rtsa_submit_rx_slot(rtsa, slot_idx);
             return -EFAULT;
+        }
         break;
     }
 
@@ -290,6 +326,41 @@ static long rtsa_dma_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
             rtsa->slots[slot_idx].state = SLOT_STATE_FREE;
             spin_unlock_irqrestore(&rtsa->lock, flags);
         }
+        break;
+    }
+
+    case RTSA_IOC_SET_FRAME_SIZE: {
+        __u32 requested = 0;
+        if (copy_from_user(&requested, (void __user *)arg, sizeof(requested)))
+            return -EFAULT;
+        if (requested < 64U || requested > RTSA_SLOT_SIZE)
+            return -EINVAL;
+
+        spin_lock_irqsave(&rtsa->lock, flags);
+        if (rtsa->is_running) {
+            spin_unlock_irqrestore(&rtsa->lock, flags);
+            return -EBUSY;
+        }
+        rtsa->frame_size = requested;
+        rtsa->stats.frame_size = requested;
+        spin_unlock_irqrestore(&rtsa->lock, flags);
+        break;
+    }
+
+    case RTSA_IOC_GET_STATS: {
+        struct rtsa_stats snapshot;
+        spin_lock_irqsave(&rtsa->lock, flags);
+        snapshot = rtsa->stats;
+        spin_unlock_irqrestore(&rtsa->lock, flags);
+        if (copy_to_user((void __user *)arg, &snapshot, sizeof(snapshot)))
+            return -EFAULT;
+        break;
+    }
+
+    case RTSA_IOC_GET_VERSION: {
+        __u32 version = RTSA_UAPI_VERSION;
+        if (copy_to_user((void __user *)arg, &version, sizeof(version)))
+            return -EFAULT;
         break;
     }
 
@@ -362,6 +433,7 @@ static int rtsa_dma_probe(struct platform_device *pdev) {
         return -ENOMEM;
 
     rtsa->pdev = pdev;
+    rtsa->frame_size = RTSA_MAX_FRAME_SIZE;
     spin_lock_init(&rtsa->lock);
     init_waitqueue_head(&rtsa->rx_wait);
 
@@ -373,7 +445,7 @@ static int rtsa_dma_probe(struct platform_device *pdev) {
     }
 
     // 2. 一次性申请所有缓冲区（物理连续内存）
-    rtsa->dma_total_size = RTSA_RING_BUFFER_COUNT * RTSA_BUFFER_SIZE;
+    rtsa->dma_total_size = RTSA_RING_BUFFER_COUNT * RTSA_SLOT_SIZE;
     rtsa->dma_base_vaddr = dma_alloc_coherent(
         &pdev->dev,
         rtsa->dma_total_size,
@@ -390,8 +462,8 @@ static int rtsa_dma_probe(struct platform_device *pdev) {
     for (i = 0; i < RTSA_RING_BUFFER_COUNT; i++) {
         rtsa->slots[i].rtsa = rtsa;
         rtsa->slots[i].index = i;
-        rtsa->slots[i].vaddr = rtsa->dma_base_vaddr + i * RTSA_BUFFER_SIZE;
-        rtsa->slots[i].paddr = rtsa->dma_base_paddr + i * RTSA_BUFFER_SIZE;
+        rtsa->slots[i].vaddr = rtsa->dma_base_vaddr + i * RTSA_SLOT_SIZE;
+        rtsa->slots[i].paddr = rtsa->dma_base_paddr + i * RTSA_SLOT_SIZE;
         rtsa->slots[i].state = SLOT_STATE_FREE;
         memset(&rtsa->slots[i].info, 0, sizeof(rtsa->slots[i].info));
     }

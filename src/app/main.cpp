@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QIcon>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -21,21 +22,38 @@
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #include <QTextCodec>
 #endif
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <shobjidl.h>
+#endif
 
 int main(int argc, char* argv[])
 {
+#if defined(Q_OS_WIN)
+    SetCurrentProcessExplicitAppUserModelID(L"SpectrumPro.RTSA.App");
+#endif
+
     std::setlocale(LC_ALL, "C.UTF-8");
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
+    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
 
     QApplication application(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("RTSA"));
+    QCoreApplication::setApplicationName(QStringLiteral("SpectrumPro"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
-    QCoreApplication::setOrganizationName(QStringLiteral("RTSA"));
+    QCoreApplication::setOrganizationName(QStringLiteral("SpectrumPro"));
+    application.setApplicationDisplayName(QStringLiteral("SpectrumPro - 大带宽实时频谱分析仪"));
+
+    QIcon appIcon(QStringLiteral(":/icons/app.ico"));
+    if (appIcon.isNull()) {
+        appIcon = QIcon(QStringLiteral(":/icons/app.png"));
+    }
+    application.setWindowIcon(appIcon);
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("RFSoC real-time spectrum analyzer"));
+    parser.setApplicationDescription(QStringLiteral("SpectrumPro - 大带宽实时频谱分析仪"));
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption fullScreenOption(QStringLiteral("fullscreen"),
@@ -47,6 +65,24 @@ int main(int argc, char* argv[])
                                     QStringLiteral("Select spectrum source: simulated or dma."),
                                     QStringLiteral("type"),
                                     QStringLiteral("simulated"));
+    QCommandLineOption renderModeOption(
+        QStringLiteral("render-mode"),
+        QStringLiteral("Spectrum render path: direct or offscreen."),
+        QStringLiteral("mode"),
+        QStringLiteral("offscreen"));
+    QCommandLineOption displayFpsOption(
+        QStringLiteral("display-fps"),
+        QStringLiteral("Display refresh cap in frames per second: 30, 60 or 100."),
+        QStringLiteral("fps"),
+        QStringLiteral("100"));
+    QCommandLineOption renderDiagnosticsOption(
+        QStringLiteral("render-diagnostics"),
+        QStringLiteral("Log render timing percentiles and overwrite counters."));
+    QCommandLineOption renderBenchmarkOption(
+        QStringLiteral("render-benchmark"),
+        QStringLiteral("Run a synthetic render workload: static, trace, waterfall or mixed."),
+        QStringLiteral("mode"),
+        QStringLiteral("off"));
     QCommandLineOption scenarioOption(QStringLiteral("scenario"),
                                       QStringLiteral("Load a versioned JSON simulation scenario."),
                                       QStringLiteral("path"));
@@ -70,6 +106,10 @@ int main(int argc, char* argv[])
     parser.addOption(fullScreenOption);
     parser.addOption(smokeTestOption);
     parser.addOption(sourceOption);
+    parser.addOption(renderModeOption);
+    parser.addOption(displayFpsOption);
+    parser.addOption(renderDiagnosticsOption);
+    parser.addOption(renderBenchmarkOption);
     parser.addOption(scenarioOption);
     parser.addOption(logDirectoryOption);
     parser.addOption(logLevelOption);
@@ -111,6 +151,37 @@ int main(int argc, char* argv[])
                QStringLiteral("app"),
                QStringLiteral("startup"),
                QStringLiteral("RTSA %1 starting").arg(QCoreApplication::applicationVersion()));
+
+    const QString requestedRenderMode =
+        parser.value(renderModeOption).trimmed().toLower();
+    if (requestedRenderMode != QStringLiteral("direct")
+        && requestedRenderMode != QStringLiteral("offscreen")) {
+        qCritical().noquote()
+            << "Invalid --render-mode; expected direct or offscreen.";
+        return 7;
+    }
+    bool displayFpsValid = false;
+    const int requestedDisplayFps = parser.value(displayFpsOption).toInt(&displayFpsValid);
+    if (!displayFpsValid
+        || (requestedDisplayFps != 30
+            && requestedDisplayFps != 60
+            && requestedDisplayFps != 100)) {
+        qCritical().noquote()
+            << "Invalid --display-fps; expected 30, 60 or 100.";
+        return 7;
+    }
+    const QString requestedRenderBenchmark =
+        parser.value(renderBenchmarkOption).trimmed().toLower();
+    if (requestedRenderBenchmark != QStringLiteral("off")
+        && requestedRenderBenchmark != QStringLiteral("static")
+        && requestedRenderBenchmark != QStringLiteral("trace")
+        && requestedRenderBenchmark != QStringLiteral("waterfall")
+        && requestedRenderBenchmark != QStringLiteral("mixed")) {
+        qCritical().noquote()
+            << "Invalid --render-benchmark; expected off, static, trace, waterfall or mixed.";
+        return 7;
+    }
+    const bool benchmarkEnabled = requestedRenderBenchmark != QStringLiteral("off");
 
     rtsa::SpectrumSourceKind sourceKind = rtsa::SpectrumSourceKind::Simulated;
     QString sourceError;
@@ -171,8 +242,29 @@ int main(int argc, char* argv[])
     // Automated smoke tests must not modify the developer's persisted settings.
     rtsa::MainWindow window(std::move(sourceResult.source),
                             nullptr,
-                            !parser.isSet(smokeTestOption),
+                            !parser.isSet(smokeTestOption) && !benchmarkEnabled,
                             hasScenario ? &scenarioConfiguration : nullptr);
+    if (!window.setSpectrumRenderMode(requestedRenderMode)) {
+        qCritical().noquote() << "Unable to apply the requested render mode.";
+        return 7;
+    }
+    window.setDisplayRefreshRate(requestedDisplayFps);
+    if (!window.setRenderBenchmarkMode(requestedRenderBenchmark)) {
+        qCritical().noquote() << "Unable to apply the requested render benchmark.";
+        return 7;
+    }
+    window.setRenderDiagnosticsEnabled(
+        parser.isSet(renderDiagnosticsOption) || benchmarkEnabled);
+    logger.log(rtsa::LogLevel::Info,
+               QStringLiteral("render"),
+               QStringLiteral("configured"),
+               QStringLiteral("mode=%1 benchmark=%2 displayFps=%3 diagnostics=%4")
+                   .arg(requestedRenderMode)
+                   .arg(requestedRenderBenchmark)
+                   .arg(requestedDisplayFps)
+                   .arg(parser.isSet(renderDiagnosticsOption) || benchmarkEnabled
+                            ? QStringLiteral("on")
+                            : QStringLiteral("off")));
     if (parser.isSet(fullScreenOption)) {
         window.showFullScreen();
     } else {
@@ -182,7 +274,9 @@ int main(int argc, char* argv[])
     if (parser.isSet(smokeTestOption)) {
         bool valid = false;
         const int durationMs = parser.value(smokeTestOption).toInt(&valid);
-        QTimer::singleShot(0, &window, &rtsa::MainWindow::startAcquisition);
+        if (!benchmarkEnabled) {
+            QTimer::singleShot(0, &window, &rtsa::MainWindow::startAcquisition);
+        }
         QTimer::singleShot(valid ? std::max(100, durationMs) : 1500,
                            &application,
                            &QCoreApplication::quit);

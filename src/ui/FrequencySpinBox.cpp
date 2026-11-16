@@ -47,10 +47,13 @@ QWidget* FrequencySpinBox::createCompoundWidget(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     unitCombo_->setParent(containerWidget_);
-    unitCombo_->setFixedWidth(64);
-    unitCombo_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     unitCombo_->setObjectName(objectName().isEmpty() ? QStringLiteral("frequencyUnit")
                                                     : objectName() + QStringLiteral("Unit"));
+    const int unitTextWidth = unitCombo_->fontMetrics().horizontalAdvance(
+        QStringLiteral("GHz"));
+    unitCombo_->setMinimumWidth(std::clamp(unitTextWidth + 30, 52, 64));
+    unitCombo_->setMaximumWidth(std::clamp(unitTextWidth + 44, 64, 80));
+    unitCombo_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     layout->addWidget(this, 1);
     layout->addWidget(unitCombo_, 0);

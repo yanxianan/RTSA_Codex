@@ -22,6 +22,13 @@ elseif(MODE STREQUAL "missing-scenario")
                 --no-file-log
         RESULT_VARIABLE actual_exit
     )
+elseif(MODE STREQUAL "invalid-render-benchmark")
+    execute_process(
+        COMMAND "${APP}" --source simulated
+                --render-benchmark invalid
+                --no-file-log
+        RESULT_VARIABLE actual_exit
+    )
 else()
     message(FATAL_ERROR "Unknown MODE: ${MODE}")
 endif()

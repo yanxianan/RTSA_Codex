@@ -13,6 +13,7 @@
 #include <QPinchGesture>
 #include <QResizeEvent>
 #include <QRubberBand>
+#include <QThread>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -27,22 +28,19 @@ SpectrumPlotWidget::SpectrumPlotWidget(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setAutoFillBackground(false);
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_AcceptTouchEvents, true);
     grabGesture(Qt::PinchGesture);
     grabGesture(Qt::PanGesture);
     renderer_.setViewport(size(), calculatePlotRect());
 
-    // 方案二：启动多核异步离屏渲染工作线程 (运行在 CPU0/CPU1/CPU2)
-    renderWorker_ = std::thread(&SpectrumPlotWidget::workerLoop, this);
+    // Keep the existing offscreen path as the default; direct mode is opt-in.
+    startRenderWorker();
 }
 
 SpectrumPlotWidget::~SpectrumPlotWidget()
 {
-    workerStopping_.store(true, std::memory_order_release);
-    taskCv_.notify_all();
-    if (renderWorker_.joinable()) {
-        renderWorker_.join();
-    }
+    stopRenderWorker();
 }
 
 bool SpectrumPlotWidget::event(QEvent* event)
@@ -76,17 +74,11 @@ void SpectrumPlotWidget::setFrame(ConstSpectrumFramePtr frame)
     frame_ = std::move(frame);
     synchronizeMarkers();
 
-    // 方案二：打包渲染上下文，唤醒后台工作线程执行离屏渲染（几何计算彻底移交后台）
-    RenderContext ctx = renderer_.currentContext();
-    ctx.frame = frame_;
-    ctx.widgetSize = size();
-    ctx.plotRect = calculatePlotRect();
-    {
-        std::lock_guard<std::mutex> lock(taskMutex_);
-        pendingContext_ = std::move(ctx);
-        hasPendingContext_ = true;
+    if (renderMode_ == RenderMode::Offscreen) {
+        enqueueLatestRenderContext();
+    } else {
+        update();
     }
-    taskCv_.notify_one();
 }
 
 ConstSpectrumFramePtr SpectrumPlotWidget::frame() const noexcept
@@ -94,22 +86,101 @@ ConstSpectrumFramePtr SpectrumPlotWidget::frame() const noexcept
     return frame_;
 }
 
+void SpectrumPlotWidget::setRenderMode(const RenderMode mode)
+{
+    if (renderMode_ == mode) {
+        return;
+    }
+
+    if (mode == RenderMode::Direct) {
+        stopRenderWorker();
+        renderMode_ = RenderMode::Direct;
+        {
+            std::lock_guard<std::mutex> lock(frontImageMutex_);
+            hasFrontImage_ = false;
+        }
+        if (frame_) {
+            renderer_.setFrame(frame_);
+        }
+        renderer_.setViewport(size(), calculatePlotRect());
+    } else {
+        renderMode_ = RenderMode::Offscreen;
+        startRenderWorker();
+        if (frame_ && !size().isEmpty()) {
+            enqueueLatestRenderContext();
+        }
+    }
+    update();
+}
+
+SpectrumPlotWidget::RenderMode SpectrumPlotWidget::renderMode() const noexcept
+{
+    return renderMode_;
+}
+
 void SpectrumPlotWidget::invalidateFrontImageAndRerender()
 {
+    if (renderMode_ == RenderMode::Direct) {
+        update();
+        return;
+    }
+
     {
         std::lock_guard<std::mutex> lock(frontImageMutex_);
         hasFrontImage_ = false;
     }
-    if (frame_ && !size().isEmpty()) {
-        RenderContext ctx = renderer_.currentContext();
-        ctx.widgetSize = size();
-        ctx.plotRect = calculatePlotRect();
-        {
-            std::lock_guard<std::mutex> lock(taskMutex_);
-            pendingContext_ = std::move(ctx);
-            hasPendingContext_ = true;
+    enqueueLatestRenderContext();
+}
+
+bool SpectrumPlotWidget::enqueueLatestRenderContext()
+{
+    if (renderMode_ != RenderMode::Offscreen || !frame_ || size().isEmpty()) {
+        return false;
+    }
+
+    RenderContext ctx = renderer_.currentContext();
+    ctx.frame = frame_;
+    ctx.widgetSize = size();
+    ctx.plotRect = calculatePlotRect();
+
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+        if (hasPendingContext_) {
+            pendingOverwriteCount_.fetch_add(1U, std::memory_order_relaxed);
         }
-        taskCv_.notify_one();
+        pendingContext_ = std::move(ctx);
+        hasPendingContext_ = true;
+    }
+    taskCv_.notify_one();
+    return true;
+}
+
+void SpectrumPlotWidget::startRenderWorker()
+{
+    if (renderWorker_) {
+        return;
+    }
+    workerStopping_.store(false, std::memory_order_release);
+    renderWorker_ = QThread::create([this] {
+        workerLoop();
+    });
+    renderWorker_->setObjectName(QStringLiteral("SpectrumRenderWorker"));
+    renderWorker_->start();
+}
+
+void SpectrumPlotWidget::stopRenderWorker()
+{
+    workerStopping_.store(true, std::memory_order_release);
+    taskCv_.notify_all();
+    if (renderWorker_) {
+        renderWorker_->wait();
+        delete renderWorker_;
+        renderWorker_ = nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> lock(taskMutex_);
+        pendingContext_ = {};
+        hasPendingContext_ = false;
     }
 }
 
@@ -177,7 +248,7 @@ void SpectrumPlotWidget::clearAllMarkers()
 
 void SpectrumPlotWidget::peakSearch()
 {
-    if (!frame_ || frame_->bins.empty()) {
+    if (!frame_ || frame_->binCount() == 0U) {
         return;
     }
 
@@ -188,26 +259,20 @@ void SpectrumPlotWidget::peakSearch()
 
     if (!peaks.empty()) {
         for (const std::size_t p : peaks) {
-            if (frame_->bins[p] > maxAmp) {
-                maxAmp = frame_->bins[p];
+            if (frame_->binDb(p) > maxAmp) {
+                maxAmp = frame_->binDb(p);
                 bestBin = p;
                 found = true;
             }
         }
     } else {
-        const auto peak = std::max_element(
-            frame_->bins.cbegin(), frame_->bins.cend(), [](float left, float right) {
-                if (!std::isfinite(left)) {
-                    return true;
-                }
-                if (!std::isfinite(right)) {
-                    return false;
-                }
-                return left < right;
-            });
-        if (peak != frame_->bins.cend() && std::isfinite(*peak) && *peak >= peakThreshold_) {
-            bestBin = static_cast<std::size_t>(std::distance(frame_->bins.cbegin(), peak));
-            found = true;
+        for (std::size_t index = 0; index < frame_->binCount(); ++index) {
+            const float value = frame_->binDb(index);
+            if (std::isfinite(value) && value >= peakThreshold_ && value > maxAmp) {
+                maxAmp = value;
+                bestBin = index;
+                found = true;
+            }
         }
     }
 
@@ -280,7 +345,7 @@ void SpectrumPlotWidget::setMarkerEnabled(const std::size_t markerIndex, const b
     }
     if (enabled) {
         if (!markerFrequenciesHz_[markerIndex]) {
-            if (frame_ && !frame_->bins.empty()) {
+            if (frame_ && frame_->binCount() > 0U) {
                 markerFrequenciesHz_[markerIndex] = frame_->metadata.centerFrequencyHz;
             } else {
                 markerFrequenciesHz_[markerIndex] = 1.0e9;
@@ -331,7 +396,7 @@ MarkerMeasurement SpectrumPlotWidget::markerMeasurement(
 {
     if (markerIndex >= markerFrequenciesHz_.size()
         || !markerFrequenciesHz_[markerIndex]
-        || !frame_ || frame_->bins.empty()) {
+        || !frame_ || frame_->binCount() == 0U) {
         return {};
     }
     const double frequency = *markerFrequenciesHz_[markerIndex];
@@ -342,14 +407,14 @@ MarkerMeasurement SpectrumPlotWidget::markerMeasurement(
     }
     const std::size_t bin = FrequencyMapper::nearestBinForFrequency(
         frame_->metadata, frequency);
-    if (bin >= frame_->bins.size() || !std::isfinite(frame_->bins[bin])) {
+    if (bin >= frame_->binCount() || !std::isfinite(frame_->binDb(bin))) {
         return {};
     }
     return MarkerMeasurement {
         true,
         bin,
         FrequencyMapper::frequencyForBin(frame_->metadata, bin),
-        frame_->bins[bin]
+        frame_->binDb(bin)
     };
 }
 
@@ -389,6 +454,80 @@ bool SpectrumPlotWidget::isLastPaintOffscreen() const noexcept
     return lastPaintOffscreen_;
 }
 
+SpectrumRenderDiagnostics SpectrumPlotWidget::renderDiagnostics() const
+{
+    SpectrumRenderDiagnostics diagnostics;
+    {
+        std::lock_guard<std::mutex> lock(metricsMutex_);
+        diagnostics.renderTotal = renderTotalTiming_.summary();
+        diagnostics.geometry = geometryTiming_.summary();
+        diagnostics.staticBuild = staticBuildTiming_.summary();
+        diagnostics.staticRestore = staticRestoreTiming_.summary();
+        diagnostics.trace = traceTiming_.summary();
+        diagnostics.guiPaint = guiPaintTiming_.summary();
+    }
+    diagnostics.pendingOverwriteCount =
+        pendingOverwriteCount_.load(std::memory_order_relaxed);
+    diagnostics.syncFallbackCount =
+        syncFallbackCount_.load(std::memory_order_relaxed);
+    diagnostics.directPaintCount =
+        directPaintCount_.load(std::memory_order_relaxed);
+    diagnostics.offscreenPaintCount =
+        offscreenPaintCount_.load(std::memory_order_relaxed);
+    diagnostics.lastPaintMilliseconds = lastPaintMilliseconds_;
+    diagnostics.lastPaintOffscreen = lastPaintOffscreen_;
+    return diagnostics;
+}
+
+void SpectrumPlotWidget::resetRenderDiagnostics()
+{
+    {
+        std::lock_guard<std::mutex> lock(metricsMutex_);
+        renderTotalTiming_ = RollingTiming();
+        geometryTiming_ = RollingTiming();
+        staticBuildTiming_ = RollingTiming();
+        staticRestoreTiming_ = RollingTiming();
+        traceTiming_ = RollingTiming();
+        guiPaintTiming_ = RollingTiming();
+    }
+    pendingOverwriteCount_.store(0U, std::memory_order_relaxed);
+    syncFallbackCount_.store(0U, std::memory_order_relaxed);
+    directPaintCount_.store(0U, std::memory_order_relaxed);
+    offscreenPaintCount_.store(0U, std::memory_order_relaxed);
+    lastPaintMilliseconds_ = 0.0;
+    lastPaintOffscreen_ = false;
+}
+
+void SpectrumPlotWidget::recordOffscreenRender(
+    const double totalMilliseconds,
+    const RasterRenderTiming& timings)
+{
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    renderTotalTiming_.add(totalMilliseconds);
+    geometryTiming_.add(timings.geometryMs);
+    staticBuildTiming_.add(timings.staticBuildMs);
+    staticRestoreTiming_.add(timings.staticRestoreMs);
+    traceTiming_.add(timings.traceMs);
+}
+
+void SpectrumPlotWidget::recordDirectRender(
+    const double totalMilliseconds,
+    const RasterRenderTiming& timings)
+{
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    renderTotalTiming_.add(totalMilliseconds);
+    geometryTiming_.add(timings.geometryMs);
+    staticBuildTiming_.add(timings.staticBuildMs);
+    staticRestoreTiming_.add(timings.staticRestoreMs);
+    traceTiming_.add(timings.traceMs);
+}
+
+void SpectrumPlotWidget::recordGuiPaint(const double milliseconds)
+{
+    std::lock_guard<std::mutex> lock(metricsMutex_);
+    guiPaintTiming_.add(milliseconds);
+}
+
 void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
 {
     paintTimer_.restart();
@@ -396,27 +535,66 @@ void SpectrumPlotWidget::paintEvent(QPaintEvent* event)
 
     const QRect dirty = (event && !event->rect().isEmpty()) ? event->rect() : rect();
     bool renderedFromBuffer = false;
-    {
-        std::lock_guard<std::mutex> lock(frontImageMutex_);
-        if (hasFrontImage_ && !frontImage_.isNull() && frontImage_.size() == size()) {
-            // 关键优化：只将 dirty 矩形切片贴入屏幕，彻底消除 1080P 全屏无用内存搬运！
-            painter.drawImage(dirty.topLeft(), frontImage_, dirty);
-            renderedFromBuffer = true;
+    bool directRender = false;
+    std::uint64_t paintedPublicationSequence = 0U;
+    std::uint64_t paintedTimestampNs = 0U;
+
+    if (renderMode_ == RenderMode::Direct) {
+        {
+            std::lock_guard<std::mutex> renderLock(paintRenderMutex_);
+            renderer_.resetFrameTimings();
+            renderer_.setViewport(size(), calculatePlotRect());
+            renderer_.setFrame(frame_);
+            renderer_.paint(painter);
+        }
+        directRender = true;
+        directPaintCount_.fetch_add(1U, std::memory_order_relaxed);
+        if (frame_) {
+            paintedPublicationSequence = frame_->metadata.publicationSequence;
+            paintedTimestampNs = frame_->metadata.timestampNs;
+        }
+    } else {
+        {
+            std::lock_guard<std::mutex> lock(frontImageMutex_);
+            if (hasFrontImage_ && !frontImage_.isNull()
+                && frontImage_.size() == size()) {
+                // Only the damaged slice crosses into the Qt backing store.
+                painter.drawImage(dirty.topLeft(), frontImage_, dirty);
+                renderedFromBuffer = true;
+                paintedPublicationSequence = frontPublicationSequence_;
+                paintedTimestampNs = frontTimestampNs_;
+            }
+        }
+
+        // Cold start or a just-resized widget uses a synchronous frame.
+        if (!renderedFromBuffer) {
+            syncFallbackCount_.fetch_add(1U, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> renderLock(paintRenderMutex_);
+            renderer_.resetFrameTimings();
+            renderer_.setViewport(size(), calculatePlotRect());
+            renderer_.setFrame(frame_);
+            renderer_.paint(painter);
+            directRender = true;
+            if (frame_) {
+                paintedPublicationSequence = frame_->metadata.publicationSequence;
+                paintedTimestampNs = frame_->metadata.timestampNs;
+            }
+        } else {
+            offscreenPaintCount_.fetch_add(1U, std::memory_order_relaxed);
         }
     }
 
-    // 若后台离屏图像尚未就绪（如冷启动第一帧或单测同步调用），平滑降级为同步绘制
-    if (!renderedFromBuffer) {
-        renderer_.setFrame(frame_);
-        renderer_.paint(painter);
-    }
-
     painter.end();
-    lastPaintMilliseconds_ = static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
+    lastPaintMilliseconds_ =
+        static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
     lastPaintOffscreen_ = renderedFromBuffer;
-    if (frame_) {
-        emit framePainted(frame_->metadata.publicationSequence,
-                          frame_->metadata.timestampNs);
+    recordGuiPaint(lastPaintMilliseconds_);
+    if (directRender) {
+        const RasterRenderTiming timings = renderer_.lastTimings();
+        recordDirectRender(timings.totalMs, timings);
+    }
+    if (paintedPublicationSequence != 0U) {
+        emit framePainted(paintedPublicationSequence, paintedTimestampNs);
     }
 }
 
@@ -424,15 +602,13 @@ void SpectrumPlotWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     renderer_.setViewport(event->size(), calculatePlotRect());
-    {
-        std::lock_guard<std::mutex> lock(frontImageMutex_);
-        hasFrontImage_ = false;
-    }
+    invalidateFrontImageAndRerender();
 }
 
 void SpectrumPlotWidget::workerLoop()
 {
     QImage localBackBuffer;
+    std::uint64_t localStaticLayerGeneration = 0U;
     while (!workerStopping_.load(std::memory_order_acquire)) {
         RenderContext ctx;
         {
@@ -451,17 +627,36 @@ void SpectrumPlotWidget::workerLoop()
             continue;
         }
 
-        // 后台工作线程独立渲染整幅图像 (在 CPU0/CPU1/CPU2 上运行)
-        offscreenRenderer_.renderToImage(ctx, localBackBuffer);
+        QElapsedTimer renderTimer;
+        renderTimer.start();
+        {
+            std::lock_guard<std::mutex> renderLock(paintRenderMutex_);
+            offscreenRenderer_.renderToImage(ctx, localBackBuffer,
+                                             localStaticLayerGeneration);
+        }
+        const double renderMilliseconds =
+            static_cast<double>(renderTimer.nsecsElapsed()) / 1.0e6;
+        recordOffscreenRender(renderMilliseconds,
+                              offscreenRenderer_.lastTimings());
 
         if (!localBackBuffer.isNull()) {
+            QRect dirtyRect = ctx.plotRect;
             {
                 std::lock_guard<std::mutex> lock(frontImageMutex_);
-                frontImage_ = localBackBuffer; // Qt 隐式共享浅拷贝，纳秒级
+                if (!hasFrontImage_
+                    || frontImage_.size() != localBackBuffer.size()
+                    || frontStaticLayerGeneration_ != localStaticLayerGeneration) {
+                    dirtyRect = QRect(QPoint(0, 0), ctx.widgetSize);
+                }
+                frontImage_.swap(localBackBuffer);
+                std::swap(frontStaticLayerGeneration_,
+                          localStaticLayerGeneration);
+                frontPublicationSequence_ =
+                    ctx.frame->metadata.publicationSequence;
+                frontTimestampNs_ = ctx.frame->metadata.timestampNs;
                 hasFrontImage_ = true;
             }
 
-            const QRect dirtyRect = ctx.plotRect;
             QMetaObject::invokeMethod(this, [this, dirtyRect] {
                 update(dirtyRect);
             }, Qt::QueuedConnection);
@@ -471,7 +666,7 @@ void SpectrumPlotWidget::workerLoop()
 
 void SpectrumPlotWidget::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() != Qt::LeftButton || !frame_ || frame_->bins.empty()
+    if (event->button() != Qt::LeftButton || !frame_ || frame_->binCount() == 0U
         || !renderer_.plotRect().contains(mousePosition(event))) {
         QWidget::mousePressEvent(event);
         return;
@@ -640,7 +835,7 @@ QRect SpectrumPlotWidget::plotRect() const
 
 std::size_t SpectrumPlotWidget::binAtPosition(const QPoint& position) const
 {
-    if (!frame_ || frame_->bins.empty() || renderer_.plotRect().width() <= 1) {
+    if (!frame_ || frame_->binCount() == 0U || renderer_.plotRect().width() <= 1) {
         return 0;
     }
     const double normalized = std::clamp(
@@ -649,7 +844,7 @@ std::size_t SpectrumPlotWidget::binAtPosition(const QPoint& position) const
         0.0,
         1.0);
     return static_cast<std::size_t>(std::llround(
-        normalized * static_cast<double>(frame_->bins.size() - 1U)));
+        normalized * static_cast<double>(frame_->binCount() - 1U)));
 }
 
 QPoint SpectrumPlotWidget::mousePosition(const QMouseEvent* event) const
@@ -672,7 +867,7 @@ QPoint SpectrumPlotWidget::wheelPosition(const QWheelEvent* event) const
 
 void SpectrumPlotWidget::selectMarkerAt(const QPoint& position)
 {
-    if (!frame_ || frame_->bins.empty()) {
+    if (!frame_ || frame_->binCount() == 0U) {
         return;
     }
     const auto bin = binAtPosition(position);
@@ -687,7 +882,7 @@ void SpectrumPlotWidget::selectMarkerAt(const QPoint& position)
 void SpectrumPlotWidget::synchronizeMarkers()
 {
     const bool activeWasSet = markerFrequenciesHz_[activeMarkerIndex_].has_value();
-    if (!frame_ || frame_->bins.empty()) {
+    if (!frame_ || frame_->binCount() == 0U) {
         updateRendererMarkers();
         if (activeWasSet) {
             emit markerCleared();
@@ -730,7 +925,7 @@ void SpectrumPlotWidget::publishActiveMarker()
 void SpectrumPlotWidget::updateRendererMarkers()
 {
     std::array<std::optional<std::size_t>, kSpectrumMarkerCount> bins;
-    if (frame_ && !frame_->bins.empty()) {
+    if (frame_ && frame_->binCount() > 0U) {
         for (std::size_t index = 0; index < markerFrequenciesHz_.size(); ++index) {
             if (!markerFrequenciesHz_[index]) {
                 continue;
@@ -750,11 +945,15 @@ void SpectrumPlotWidget::updateRendererMarkers()
 std::vector<std::size_t> SpectrumPlotWidget::findPeaks() const
 {
     std::vector<std::size_t> peaks;
-    if (!frame_ || frame_->bins.size() < 3) {
+    if (!frame_ || frame_->binCount() < 3U) {
         return peaks;
     }
 
-    const auto& data = frame_->bins;
+    std::vector<float> data;
+    data.reserve(frame_->binCount());
+    for (std::size_t index = 0; index < frame_->binCount(); ++index) {
+        data.push_back(frame_->binDb(index));
+    }
     const std::size_t n = data.size();
     constexpr float kExcursion = 3.0F; // 工业标准 3 dB 峰值凸起高度 (Peak Excursion)
 
@@ -867,7 +1066,7 @@ std::vector<std::size_t> SpectrumPlotWidget::findPeaks() const
 
 bool SpectrumPlotWidget::isPeak(const std::size_t bin) const noexcept
 {
-    if (!frame_ || bin >= frame_->bins.size()) {
+    if (!frame_ || bin >= frame_->binCount()) {
         return false;
     }
     const auto peaks = findPeaks();
@@ -876,7 +1075,7 @@ bool SpectrumPlotWidget::isPeak(const std::size_t bin) const noexcept
 
 void SpectrumPlotWidget::searchAdjacentPeak(const int direction)
 {
-    if (!frame_ || frame_->bins.empty() || direction == 0) {
+    if (!frame_ || frame_->binCount() == 0U || direction == 0) {
         return;
     }
     const MarkerMeasurement current = markerMeasurement(activeMarkerIndex_);

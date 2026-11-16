@@ -8,7 +8,11 @@ add_library(rtsa_core STATIC
     core/FrequencyMapper.h
     core/LatestFrameStore.cpp
     core/LatestFrameStore.h
+    core/PlRegisterMap.cpp
+    core/PlRegisterMap.h
     core/SpectrumFrame.h
+    core/SpectrumFrameCodec.cpp
+    core/SpectrumFrameCodec.h
     core/SpectrumPipeline.cpp
     core/SpectrumPipeline.h
     core/SpectrumMeasurements.cpp
@@ -35,6 +39,7 @@ add_executable(rtsa_app
     plot/Colormap.h
     plot/RasterSpectrumRenderer.cpp
     plot/RasterSpectrumRenderer.h
+    plot/RenderTiming.h
     plot/SpectrumPlotWidget.cpp
     plot/SpectrumPlotWidget.h
     plot/WaterfallPlotWidget.cpp
@@ -60,6 +65,12 @@ add_executable(rtsa_app
     sources/SourceTypes.h
     ui/MainWindow.cpp
     ui/MainWindow.h
+    resources/rtsa.qrc
+    $<$<PLATFORM_ID:Windows>:resources/rtsa_app.rc>
+)
+
+target_include_directories(rtsa_app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources
 )
 
 target_link_libraries(rtsa_app PRIVATE

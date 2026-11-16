@@ -2,6 +2,7 @@
 #include "core/FrequencyMapper.h"
 
 #include <QApplication>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QGestureEvent>
 #include <QKeyEvent>
@@ -35,11 +36,13 @@ WaterfallPlotWidget::WaterfallPlotWidget(QWidget* parent)
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
     setAutoFillBackground(false);
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_AcceptTouchEvents, true);
     grabGesture(Qt::PinchGesture);
     grabGesture(Qt::PanGesture);
 
     colorTable_ = Colormap::createColorTable(colormapPreset_);
+    rebuildColorBarImage();
     updatePlotGeometry();
 }
 
@@ -51,6 +54,7 @@ void WaterfallPlotWidget::setAmplitudeScale(const float referenceLevel, const fl
     }
     referenceLevel_ = referenceLevel;
     bottomLevel_ = safeBottom;
+    invalidateStaticLayer();
     update();
 }
 
@@ -64,6 +68,8 @@ void WaterfallPlotWidget::setColormap(const ColormapPreset preset)
     if (!bufferImage_.isNull()) {
         bufferImage_.setColorTable(colorTable_);
     }
+    rebuildColorBarImage();
+    invalidateStaticLayer();
     update();
 }
 
@@ -73,8 +79,8 @@ void WaterfallPlotWidget::setHistoryDepth(int depth)
     if (historyDepth_ == depth) {
         return;
     }
-    historyDepth_ = depth;
-    resizeImageBuffer(bufferWidth_, historyDepth_);
+    resizeImageBuffer(bufferWidth_, depth);
+    invalidateStaticLayer();
     update();
 }
 
@@ -96,7 +102,14 @@ QRect WaterfallPlotWidget::calculatePlotRect() const
 
 void WaterfallPlotWidget::updatePlotGeometry()
 {
-    plotRect_ = calculatePlotRect();
+    const QRect nextPlotRect = calculatePlotRect();
+    if (plotRect_ != nextPlotRect) {
+        plotRect_ = nextPlotRect;
+        invalidateStaticLayer();
+    }
+    if (staticLayer_.size() != size()) {
+        invalidateStaticLayer();
+    }
     const int targetWidth = std::max(64, plotRect_.width());
     if (bufferImage_.isNull() || bufferWidth_ != targetWidth || bufferImage_.height() != historyDepth_) {
         resizeImageBuffer(targetWidth, historyDepth_);
@@ -197,8 +210,19 @@ void WaterfallPlotWidget::resizeImageBuffer(const int width, const int height)
 
 void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
 {
-    if (!frame || frame->bins.empty()) {
+    if (!frame || frame->binCount() == 0U) {
         return;
+    }
+    ingestTimer_.restart();
+
+    const bool axesChanged =
+        staticLayer_.isNull()
+        || staticCenterFrequencyHz_ != frame->metadata.centerFrequencyHz
+        || staticSpanHz_ != frame->metadata.spanHz;
+    if (axesChanged) {
+        staticCenterFrequencyHz_ = frame->metadata.centerFrequencyHz;
+        staticSpanHz_ = frame->metadata.spanHz;
+        invalidateStaticLayer();
     }
     latestFrame_ = frame;
 
@@ -206,7 +230,7 @@ void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
         updatePlotGeometry();
     }
 
-    const std::size_t binCount = frame->bins.size();
+    const std::size_t binCount = frame->binCount();
     if (columnMaxAmplitudes_.size() != static_cast<std::size_t>(bufferWidth_)) {
         columnMaxAmplitudes_.resize(bufferWidth_);
     }
@@ -220,8 +244,9 @@ void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
         
         float maxVal = -1000.0F;
         for (std::size_t b = startBin; b < endBin; ++b) {
-            if (frame->bins[b] > maxVal) {
-                maxVal = frame->bins[b];
+        const float value = frame->binDb(b);
+        if (value > maxVal) {
+            maxVal = value;
             }
         }
         columnMaxAmplitudes_[col] = maxVal;
@@ -238,7 +263,14 @@ void WaterfallPlotWidget::addFrame(ConstSpectrumFramePtr frame)
         scanLine[col] = Colormap::mapToColorIndex(columnMaxAmplitudes_[col], referenceLevel_, bottomLevel_);
     }
 
-    update(plotRect_);
+    lastIngestMilliseconds_ =
+        static_cast<double>(ingestTimer_.nsecsElapsed()) / 1.0e6;
+    ingestTiming_.add(lastIngestMilliseconds_);
+    if (axesChanged) {
+        update();
+    } else {
+        update(plotRect_);
+    }
 }
 
 void WaterfallPlotWidget::resizeEvent(QResizeEvent* event)
@@ -247,31 +279,110 @@ void WaterfallPlotWidget::resizeEvent(QResizeEvent* event)
     updatePlotGeometry();
 }
 
-void WaterfallPlotWidget::paintEvent(QPaintEvent*)
+void WaterfallPlotWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    switch (event->type()) {
+    case QEvent::FontChange:
+    case QEvent::PaletteChange:
+    case QEvent::StyleChange:
+    case QEvent::ApplicationFontChange:
+    case QEvent::LocaleChange:
+    case QEvent::LanguageChange:
+        invalidateStaticLayer();
+        update();
+        break;
+    default:
+        break;
+    }
+}
+
+WaterfallRenderDiagnostics WaterfallPlotWidget::renderDiagnostics() const
+{
+    WaterfallRenderDiagnostics diagnostics;
+    diagnostics.ingest = ingestTiming_.summary();
+    diagnostics.paint = paintTiming_.summary();
+    diagnostics.lastIngestMilliseconds = lastIngestMilliseconds_;
+    diagnostics.lastPaintMilliseconds = lastPaintMilliseconds_;
+    return diagnostics;
+}
+
+void WaterfallPlotWidget::resetRenderDiagnostics()
+{
+    ingestTiming_ = RollingTiming();
+    paintTiming_ = RollingTiming();
+    lastIngestMilliseconds_ = 0.0;
+    lastPaintMilliseconds_ = 0.0;
+}
+
+void WaterfallPlotWidget::invalidateStaticLayer()
+{
+    staticLayerDirty_ = true;
+}
+
+void WaterfallPlotWidget::rebuildColorBarImage()
+{
+    if (colorTable_.isEmpty()) {
+        colorBarImage_ = QImage();
+        return;
+    }
+
+    colorBarImage_ = QImage(1, 256, QImage::Format_Indexed8);
+    colorBarImage_.setColorTable(colorTable_);
+    for (int i = 0; i < 256; ++i) {
+        colorBarImage_.scanLine(255 - i)[0] = static_cast<uchar>(i);
+    }
+}
+
+void WaterfallPlotWidget::rebuildStaticLayer()
+{
+    staticLayerDirty_ = false;
+    if (size().isEmpty()) {
+        staticLayer_ = QImage();
+        return;
+    }
+
+    const QColor bgColor = lightTheme_ ? QColor(245, 247, 250) : QColor(14, 18, 24);
+    const QColor plotColor = lightTheme_ ? QColor(248, 250, 252) : QColor(8, 10, 14);
+    staticLayer_ = QImage(size(), QImage::Format_RGB16);
+    staticLayer_.fill(bgColor);
+
+    QPainter painter(&staticLayer_);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.fillRect(plotRect_, plotColor);
+    drawAxisText(painter);
+    drawColorBar(painter);
+}
+
+void WaterfallPlotWidget::paintEvent(QPaintEvent* event)
 {
     paintTimer_.restart();
 
     if (plotRect_ != calculatePlotRect()) {
         updatePlotGeometry();
     }
+    if (staticLayerDirty_ || staticLayer_.size() != size()) {
+        rebuildStaticLayer();
+    }
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
+    const QRect dirty = (event && !event->rect().isEmpty())
+        ? event->rect().intersected(rect())
+        : rect();
+    painter.setClipRect(dirty);
 
-    // 1. Fill background
-    const QColor bgColor = lightTheme_ ? QColor(245, 247, 250) : QColor(14, 18, 24);
-    painter.fillRect(rect(), bgColor);
+    if (!staticLayer_.isNull()) {
+        painter.drawImage(dirty.topLeft(), staticLayer_, dirty);
+    }
 
-    // 2. Draw Waterfall Image
-    drawWaterfallImage(painter);
+    drawWaterfallImage(painter, dirty);
+    drawGridAndBorder(painter);
 
-    // 3. Draw Grid, Axes and Labels
-    drawGridAndAxes(painter);
-
-    // 4. Draw Color Bar Legend
-    drawColorBar(painter);
-
-    lastPaintMilliseconds_ = static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
+    painter.end();
+    lastPaintMilliseconds_ =
+        static_cast<double>(paintTimer_.nsecsElapsed()) / 1.0e6;
+    paintTiming_.add(lastPaintMilliseconds_);
 }
 
 void WaterfallPlotWidget::drawColorBar(QPainter& painter)
@@ -285,13 +396,10 @@ void WaterfallPlotWidget::drawColorBar(QPainter& painter)
     const int barW = 12;
     const int barH = plotRect_.height();
 
-    // Vertical Color Bar (top is 255 = ref, bottom is 0 = bottom)
-    QImage barImage(1, 256, QImage::Format_Indexed8);
-    barImage.setColorTable(colorTable_);
-    for (int i = 0; i < 256; ++i) {
-        barImage.setPixel(0, 255 - i, i);
+    if (colorBarImage_.isNull()) {
+        rebuildColorBarImage();
     }
-    painter.drawImage(QRect(barX, barY, barW, barH), barImage);
+    painter.drawImage(QRect(barX, barY, barW, barH), colorBarImage_);
 
     // Border
     const QColor frameColor = lightTheme_ ? QColor(190, 198, 208) : QColor(48, 58, 72);
@@ -318,15 +426,19 @@ void WaterfallPlotWidget::drawColorBar(QPainter& painter)
     painter.drawText(barX - 2, barY - 3, unitText);
 }
 
-void WaterfallPlotWidget::drawWaterfallImage(QPainter& painter)
+void WaterfallPlotWidget::drawWaterfallImage(QPainter& painter,
+                                             const QRect& dirtyRect)
 {
     if (plotRect_.width() <= 0 || plotRect_.height() <= 0 || rowCount_ == 0 || bufferImage_.isNull()) {
-        painter.fillRect(plotRect_, QColor(8, 10, 14));
+        return;
+    }
+    const QRect paintRect = plotRect_.intersected(dirtyRect);
+    if (paintRect.isEmpty()) {
         return;
     }
 
     painter.save();
-    painter.setClipRect(plotRect_);
+    painter.setClipRect(paintRect, Qt::IntersectClip);
 
     if (rowCount_ < historyDepth_) {
         // Partially filled ring buffer: valid rowCount_ rows starting at headRow_ to historyDepth_ - 1
@@ -360,32 +472,13 @@ void WaterfallPlotWidget::drawWaterfallImage(QPainter& painter)
     painter.restore();
 }
 
-void WaterfallPlotWidget::drawGridAndAxes(QPainter& painter)
+void WaterfallPlotWidget::drawAxisText(QPainter& painter)
 {
-    const QColor frameColor = lightTheme_ ? QColor(190, 198, 208) : QColor(48, 58, 72);
-    const QColor gridColor = lightTheme_ ? QColor(220, 226, 234, 160) : QColor(36, 44, 56, 180);
     const QColor textColor = lightTheme_ ? QColor(70, 80, 95) : QColor(160, 175, 195);
-
-    // Plot Border
-    painter.setPen(QPen(frameColor, 1));
-    painter.drawRect(plotRect_);
-
-    // Frequency Grid (Vertical Lines - 10 divisions)
     constexpr int kDivisions = 10;
     const double colStep = static_cast<double>(plotRect_.width()) / kDivisions;
-    painter.setPen(QPen(gridColor, 1, Qt::DashLine));
-    for (int i = 1; i < kDivisions; ++i) {
-        const int x = plotRect_.left() + static_cast<int>(std::round(i * colStep));
-        painter.drawLine(x, plotRect_.top(), x, plotRect_.bottom());
-    }
-
-    // Time Grid (Horizontal Lines - 4 divisions)
     constexpr int kTimeDivisions = 4;
     const double rowStep = static_cast<double>(plotRect_.height()) / kTimeDivisions;
-    for (int j = 1; j < kTimeDivisions; ++j) {
-        const int y = plotRect_.top() + static_cast<int>(std::round(j * rowStep));
-        painter.drawLine(plotRect_.left(), y, plotRect_.right(), y);
-    }
 
     // Frequency Axis Labels (Bottom)
     painter.setPen(textColor);
@@ -426,6 +519,30 @@ void WaterfallPlotWidget::drawGridAndAxes(QPainter& painter)
     const QString axisTitle = tr("频率 (Hz)");
     const int titleWidth = metrics.horizontalAdvance(axisTitle);
     painter.drawText(plotRect_.center().x() - titleWidth / 2, plotRect_.bottom() + 34, axisTitle);
+}
+
+void WaterfallPlotWidget::drawGridAndBorder(QPainter& painter)
+{
+    const QColor frameColor = lightTheme_ ? QColor(190, 198, 208) : QColor(48, 58, 72);
+    const QColor gridColor = lightTheme_ ? QColor(220, 226, 234, 160) : QColor(36, 44, 56, 180);
+
+    painter.setPen(QPen(frameColor, 1));
+    painter.drawRect(plotRect_);
+
+    constexpr int kDivisions = 10;
+    const double colStep = static_cast<double>(plotRect_.width()) / kDivisions;
+    painter.setPen(QPen(gridColor, 1, Qt::DashLine));
+    for (int i = 1; i < kDivisions; ++i) {
+        const int x = plotRect_.left() + static_cast<int>(std::round(i * colStep));
+        painter.drawLine(x, plotRect_.top(), x, plotRect_.bottom());
+    }
+
+    constexpr int kTimeDivisions = 4;
+    const double rowStep = static_cast<double>(plotRect_.height()) / kTimeDivisions;
+    for (int j = 1; j < kTimeDivisions; ++j) {
+        const int y = plotRect_.top() + static_cast<int>(std::round(j * rowStep));
+        painter.drawLine(plotRect_.left(), y, plotRect_.right(), y);
+    }
 }
 
 QString WaterfallPlotWidget::formatFrequency(const double frequencyHz) const

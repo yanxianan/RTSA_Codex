@@ -14,12 +14,26 @@
 #include <memory>
 
 namespace rtsa {
+namespace {
+
+QColor rgb565Quantized(const QColor& color)
+{
+    const int red = (color.red() >> 3) & 0x1f;
+    const int green = (color.green() >> 2) & 0x3f;
+    const int blue = (color.blue() >> 3) & 0x1f;
+    return QColor((red << 3) | (red >> 2),
+                  (green << 2) | (green >> 4),
+                  (blue << 3) | (blue >> 2));
+}
+
+} // namespace
 
 class PlotTests final : public QObject {
     Q_OBJECT
 
 private slots:
     void rasterWidgetRendersWithoutOpenGL();
+    void renderModeSwitchKeepsWidgetUsable();
     void lowBinTraceSpansFullPlotWidth();
     void peakSearchUsesFullResolutionFrame();
     void markerTracksFrequencyAcrossFrames();
@@ -41,6 +55,7 @@ void PlotTests::rasterWidgetRendersWithoutOpenGL()
 {
     auto frame = std::make_shared<SpectrumFrame>();
     frame->metadata.sequence = 1;
+    frame->metadata.publicationSequence = 1;
     frame->metadata.binCount = 65536;
     frame->metadata.centerFrequencyHz = 1.0e9;
     frame->metadata.spanHz = 200.0e6;
@@ -62,6 +77,62 @@ void PlotTests::rasterWidgetRendersWithoutOpenGL()
     QVERIFY(!image.isNull());
     QVERIFY(image.pixelColor(500, 300) != QColor(Qt::transparent));
     QVERIFY(widget.lastPaintMilliseconds() >= 0.0);
+}
+
+void PlotTests::renderModeSwitchKeepsWidgetUsable()
+{
+    auto frame = std::make_shared<SpectrumFrame>();
+    frame->metadata.sequence = 1;
+    frame->metadata.publicationSequence = 1;
+    frame->metadata.binCount = 1024;
+    frame->metadata.centerFrequencyHz = 1.0e9;
+    frame->metadata.spanHz = 200.0e6;
+    frame->bins.assign(1024, -100.0F);
+    frame->bins[512] = -8.0F;
+
+    SpectrumPlotWidget widget;
+    widget.resize(1000, 600);
+    QCOMPARE(widget.renderMode(), SpectrumPlotWidget::RenderMode::Offscreen);
+    widget.setFrame(frame);
+
+    QImage image(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    widget.render(&painter);
+    painter.end();
+    QVERIFY(widget.renderDiagnostics().syncFallbackCount >= 1U);
+
+    widget.setRenderMode(SpectrumPlotWidget::RenderMode::Direct);
+    QCOMPARE(widget.renderMode(), SpectrumPlotWidget::RenderMode::Direct);
+    const std::uint64_t directPaintsBefore =
+        widget.renderDiagnostics().directPaintCount;
+    image.fill(Qt::transparent);
+    painter.begin(&image);
+    widget.render(&painter);
+    painter.end();
+    QVERIFY(!widget.isLastPaintOffscreen());
+    QVERIFY(widget.renderDiagnostics().directPaintCount > directPaintsBefore);
+
+    auto second = std::make_shared<SpectrumFrame>(*frame);
+    second->metadata.sequence = 2;
+    second->metadata.publicationSequence = 2;
+    second->bins[512] = -3.0F;
+    widget.setFrame(second);
+    QSignalSpy paintedSpy(&widget, &SpectrumPlotWidget::framePainted);
+    image.fill(Qt::transparent);
+    painter.begin(&image);
+    widget.render(&painter);
+    painter.end();
+    QCOMPARE(paintedSpy.count(), 1);
+    QCOMPARE(paintedSpy.first().at(0).toULongLong(), qulonglong(2));
+
+    widget.setRenderMode(SpectrumPlotWidget::RenderMode::Offscreen);
+    QCOMPARE(widget.renderMode(), SpectrumPlotWidget::RenderMode::Offscreen);
+    image.fill(Qt::transparent);
+    painter.begin(&image);
+    widget.render(&painter);
+    painter.end();
+    QVERIFY(!image.isNull());
 }
 
 void PlotTests::lowBinTraceSpansFullPlotWidth()
@@ -440,8 +511,8 @@ void PlotTests::appearanceSettingsChangeRasterOutput()
     widget.render(&painter);
     painter.end();
 
-    QCOMPARE(image.pixelColor(1, 1), QColor(232, 236, 240));
-    QCOMPARE(image.pixelColor(500, 300), QColor(250, 252, 253));
+    QCOMPARE(image.pixelColor(1, 1), rgb565Quantized(QColor(232, 236, 240)));
+    QCOMPARE(image.pixelColor(500, 300), rgb565Quantized(QColor(250, 252, 253)));
     bool foundTrace = false;
     for (int y = 30; y < widget.height() - 54 && !foundTrace; ++y) {
         for (int x = 76; x < widget.width() - 20; ++x) {

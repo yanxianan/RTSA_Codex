@@ -1,5 +1,6 @@
 #include "plot/SpectrumPlotWidget.h"
 #include "plot/WaterfallPlotWidget.h"
+#include "sources/DmaSpectrumSource.h"
 #include "sources/SimulatedSpectrumSource.h"
 #include "ui/ApplicationTheme.h"
 #include "ui/FrequencySpinBox.h"
@@ -9,11 +10,15 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
+#include <QFormLayout>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QSpinBox>
+#include <QSplitter>
 #include <QTableWidget>
+#include <QWidget>
 #include <QtTest>
 
 #include <algorithm>
@@ -63,14 +68,18 @@ private slots:
     void displaySkipUsesPublicationSequence();
     void singleAcquisitionDisplaysExactlyOneSequence();
     void fullScreenStateUpdatesButtonText();
+    void responsiveLayoutAdaptsAcrossWidths();
     void fullHdRasterEndToEndPerformance();
     void simulatorControlsUpdateInjectedSource();
     void nonSimulationSourceHidesSimulatorControls();
+    void dmaHardwareControlsConfigureSource();
+    void dmaParameterEditsApplyWithoutManualCommit();
     void initialScenarioPopulatesControlsAndSource();
     void invalidSweepOffsetsAreCorrected();
     void markerControlsSupportFourMarkersAndDelta();
     void canvasSingleClickDoesNotPlaceMarkers();
     void telemetryShowsProcessingRenderAndQueueDepth();
+    void renderModeAndDisplayRefreshRateAreConfigurable();
     void unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges();
     void frequencySpinBoxSeparatesValueAndUnitWithAutoScaling();
     void frequencySpinBoxStepsDownFromKhzToHzBelowOneKilohertz();
@@ -284,6 +293,41 @@ void MainWindowTests::fullScreenStateUpdatesButtonText()
     QTRY_COMPARE_WITH_TIMEOUT(button->text(), QStringLiteral("进入全屏"), 500);
 }
 
+void MainWindowTests::responsiveLayoutAdaptsAcrossWidths()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    window.show();
+    QTest::qWait(20);
+
+    auto* splitter = window.findChild<QSplitter*>(QStringLiteral("mainSplitter"));
+    auto* panel = window.findChild<QWidget*>(QStringLiteral("controlPanel"));
+    QVERIFY(splitter);
+    QVERIFY(panel);
+
+    window.resize(2560, 1440);
+    QTRY_COMPARE_WITH_TIMEOUT(splitter->orientation(), Qt::Horizontal, 500);
+    QTRY_VERIFY_WITH_TIMEOUT(panel->width() >= 300 && panel->width() <= 400, 500);
+    QVERIFY(splitter->widget(0)->width() > panel->width() * 4);
+
+    const auto wideForms = panel->findChildren<QFormLayout*>();
+    QVERIFY(!wideForms.isEmpty());
+    for (const QFormLayout* form : wideForms) {
+        QCOMPARE(form->rowWrapPolicy(), QFormLayout::WrapLongRows);
+    }
+
+    window.resize(1000, 1200);
+    QTRY_COMPARE_WITH_TIMEOUT(splitter->orientation(), Qt::Vertical, 500);
+    for (const QFormLayout* form : panel->findChildren<QFormLayout*>()) {
+        QCOMPARE(form->rowWrapPolicy(), QFormLayout::WrapAllRows);
+    }
+
+    window.resize(2560, 1440);
+    QTRY_COMPARE_WITH_TIMEOUT(splitter->orientation(), Qt::Horizontal, 500);
+    for (const QFormLayout* form : panel->findChildren<QFormLayout*>()) {
+        QCOMPARE(form->rowWrapPolicy(), QFormLayout::WrapLongRows);
+    }
+}
+
 void MainWindowTests::fullHdRasterEndToEndPerformance()
 {
     MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
@@ -360,8 +404,131 @@ void MainWindowTests::nonSimulationSourceHidesSimulatorControls()
     MainWindow window(std::make_unique<FakeSpectrumSource>(), nullptr, false);
     QVERIFY(!window.findChild<QDoubleSpinBox*>(QStringLiteral("noiseDeviationDb")));
     QVERIFY(!window.findChild<QPushButton*>(QStringLiteral("saveScenarioButton")));
+    auto* hardwareGroup = window.findChild<QWidget*>(QStringLiteral("hardwareGroup"));
+    QVERIFY(hardwareGroup);
+    QVERIFY(hardwareGroup->isHidden());
     window.startAcquisition();
     window.stopAcquisition();
+}
+
+void MainWindowTests::dmaHardwareControlsConfigureSource()
+{
+    auto source = std::make_unique<DmaSpectrumSource>();
+    auto* sourceObserver = source.get();
+    MainWindow window(std::move(source), nullptr, false);
+
+    auto* hardwareGroup = window.findChild<QWidget*>(QStringLiteral("hardwareGroup"));
+    auto* mode = window.findChild<QComboBox*>(QStringLiteral("dmaMode"));
+    auto* cicRate = window.findChild<QSpinBox*>(QStringLiteral("cicRate"));
+    auto* cicTrunc = window.findChild<QSpinBox*>(QStringLiteral("cicTrunc"));
+    auto* hbLevel = window.findChild<QSpinBox*>(QStringLiteral("hbLevel"));
+    auto* maxHold = window.findChild<QSpinBox*>(QStringLiteral("maxHoldFrames"));
+    auto* ddsFrequency = window.findChild<FrequencySpinBox*>(
+        QStringLiteral("ddsFrequencyMHz"));
+    auto* center = window.findChild<FrequencySpinBox*>(
+        QStringLiteral("centerFrequencyMHz"));
+    auto* sampleRate = window.findChild<QLabel*>(QStringLiteral("hardwareSampleRate"));
+    auto* span = window.findChild<FrequencySpinBox*>(QStringLiteral("spanMHz"));
+    auto* trace = window.findChild<QComboBox*>(QStringLiteral("traceMode"));
+    auto* averageCount = window.findChild<QSpinBox*>(QStringLiteral("averageCount"));
+    QVERIFY(hardwareGroup && mode && cicRate && cicTrunc && hbLevel
+            && maxHold && ddsFrequency && center && sampleRate
+            && span && trace && averageCount);
+    QVERIFY(!hardwareGroup->isHidden());
+    QVERIFY(mode->isEnabled());
+    QVERIFY(ddsFrequency->isEnabled());
+
+    DmaSourceConfig defaults = sourceObserver->configuration();
+    QCOMPARE(defaults.dmaMode, std::uint8_t(1U));
+    QCOMPARE(defaults.cicRate, std::uint16_t(8U));
+    QCOMPARE(defaults.hbLevel, std::uint8_t(2U));
+    QCOMPARE(defaults.maxHoldFrames, std::uint16_t(80U));
+    QVERIFY(sampleRate->text().contains(QStringLiteral("9.765625 MHz")));
+    QVERIFY(!span->isEnabled());
+    QVERIFY(!trace->isEnabled());
+    QVERIFY(!averageCount->isEnabled());
+    QVERIFY(std::abs(span->frequencyHz() - 9765625.0) < 1.0);
+
+    const int adc0Index = mode->findData(2);
+    QVERIFY(adc0Index >= 0);
+    mode->setCurrentIndex(adc0Index);
+    QVERIFY(!ddsFrequency->isEnabled());
+    QCOMPARE(center->frequencyHz(), 1.7e9);
+    QVERIFY(!center->isEnabled());
+    cicRate->setValue(4);
+    cicRate->setValue(2);
+    QCOMPARE(cicRate->value(), 4);
+    cicTrunc->setValue(40);
+    hbLevel->setValue(0);
+    maxHold->setValue(32);
+    QVERIFY(QMetaObject::invokeMethod(&window,
+                                      "applyNonFrequencySourceConfiguration"));
+
+    const DmaSourceConfig applied = sourceObserver->configuration();
+    QCOMPARE(applied.dmaMode, std::uint8_t(2U));
+    QCOMPARE(applied.cicRate, std::uint16_t(4U));
+    QCOMPARE(applied.cicTrunc, std::uint8_t(40U));
+    QCOMPARE(applied.hbLevel, std::uint8_t(0U));
+    QCOMPARE(applied.maxHoldFrames, std::uint16_t(32U));
+    QCOMPARE(applied.accumulationFrames, std::uint16_t(32U));
+    QCOMPARE(applied.binCount, std::size_t(1024U));
+    QCOMPARE(applied.frameBytes, std::uint32_t(2112U));
+    QCOMPARE(applied.hardwareSpanHz, std::uint64_t(78'125'000ULL));
+    QVERIFY(sampleRate->text().contains(QStringLiteral("78.125 MHz")));
+
+    // CIC=1 is the wideband bypass: 312.5 MSPS / 2^HB.
+    cicRate->setValue(1);
+    hbLevel->setValue(0);
+    maxHold->setValue(32);
+    QVERIFY(QMetaObject::invokeMethod(&window,
+                                      "applyNonFrequencySourceConfiguration"));
+    const DmaSourceConfig appliedWide = sourceObserver->configuration();
+    QCOMPARE(appliedWide.cicRate, std::uint16_t(1U));
+    QCOMPARE(appliedWide.hbLevel, std::uint8_t(0U));
+    QCOMPARE(appliedWide.hardwareSpanHz, std::uint64_t(312'500'000ULL));
+    QVERIFY(sampleRate->text().contains(QStringLiteral("312.5 MHz")));
+    QVERIFY(!cicTrunc->isEnabled());
+
+    const int ddsIndex = mode->findData(1);
+    QVERIFY(ddsIndex >= 0);
+    mode->setCurrentIndex(ddsIndex);
+    QCOMPARE(center->frequencyHz(), 1.0e9);
+    QVERIFY(center->isEnabled());
+}
+
+void MainWindowTests::dmaParameterEditsApplyWithoutManualCommit()
+{
+    auto source = std::make_unique<DmaSpectrumSource>();
+    auto* sourceObserver = source.get();
+    MainWindow window(std::move(source), nullptr, false);
+
+    auto* center = window.findChild<FrequencySpinBox*>(
+        QStringLiteral("centerFrequencyMHz"));
+    auto* span = window.findChild<FrequencySpinBox*>(QStringLiteral("spanMHz"));
+    auto* dds = window.findChild<FrequencySpinBox*>(
+        QStringLiteral("ddsFrequencyMHz"));
+    auto* cicRate = window.findChild<QSpinBox*>(QStringLiteral("cicRate"));
+    auto* hbLevel = window.findChild<QSpinBox*>(QStringLiteral("hbLevel"));
+    auto* maxHold = window.findChild<QSpinBox*>(
+        QStringLiteral("maxHoldFrames"));
+    QVERIFY(center && span && dds && cicRate && hbLevel && maxHold);
+
+    center->setFrequencyHz(2.4e9);
+    span->setFrequencyHz(50.0e6);
+    dds->setFrequencyHz(3.0e6);
+    cicRate->setValue(16);
+    hbLevel->setValue(3);
+    maxHold->setValue(32);
+
+    const DmaSourceConfig applied = sourceObserver->configuration();
+    QCOMPARE(applied.centerFrequencyHz, 2.4e9);
+    QCOMPARE(applied.spanHz, static_cast<double>(applied.hardwareSpanHz));
+    QCOMPARE(applied.ddsFrequencyHz, 3.0e6);
+    QCOMPARE(applied.cicRate, std::uint16_t(16U));
+    QCOMPARE(applied.hbLevel, std::uint8_t(3U));
+    QCOMPARE(applied.maxHoldFrames, std::uint16_t(32U));
+    QCOMPARE(applied.accumulationFrames, std::uint16_t(32U));
+    QCOMPARE(applied.hardwareSpanHz, std::uint64_t(2'441'406ULL));
 }
 
 void MainWindowTests::initialScenarioPopulatesControlsAndSource()
@@ -524,6 +691,59 @@ void MainWindowTests::telemetryShowsProcessingRenderAndQueueDepth()
         latencyP95->text().size() - 3).toDouble(&latencyOk);
     QVERIFY(latencyOk);
     QVERIFY2(latency < 150.0, "single-frame visible latency P95 exceeded 150 ms");
+}
+
+void MainWindowTests::renderModeAndDisplayRefreshRateAreConfigurable()
+{
+    MainWindow window(std::make_unique<SimulatedSpectrumSource>(), nullptr, false);
+    auto* plot = window.findChild<SpectrumPlotWidget*>(QStringLiteral("spectrumPlot"));
+    QVERIFY(plot);
+    QCOMPARE(window.displayRefreshRate(), 100);
+
+    window.setDisplayRefreshRate(30);
+    QCOMPARE(window.displayRefreshRate(), 30);
+    window.setDisplayRefreshRate(60);
+    QCOMPARE(window.displayRefreshRate(), 60);
+
+    QVERIFY(window.setSpectrumRenderMode(QStringLiteral("direct")));
+    QCOMPARE(window.spectrumRenderMode(), QStringLiteral("direct"));
+    QCOMPARE(plot->renderMode(), SpectrumPlotWidget::RenderMode::Direct);
+
+    QVERIFY(!window.setSpectrumRenderMode(QStringLiteral("unsupported")));
+    QCOMPARE(plot->renderMode(), SpectrumPlotWidget::RenderMode::Direct);
+
+    QVERIFY(window.setSpectrumRenderMode(QStringLiteral("offscreen")));
+    QCOMPARE(window.spectrumRenderMode(), QStringLiteral("offscreen"));
+    QCOMPARE(plot->renderMode(), SpectrumPlotWidget::RenderMode::Offscreen);
+
+    window.setRenderDiagnosticsEnabled(true);
+    QVERIFY(window.renderDiagnosticsEnabled());
+    window.setRenderDiagnosticsEnabled(false);
+    QVERIFY(!window.renderDiagnosticsEnabled());
+
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("off"));
+    QVERIFY(!window.setRenderBenchmarkMode(QStringLiteral("unsupported")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("off"));
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("static")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("static"));
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("trace")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("trace"));
+    QVERIFY(QMetaObject::invokeMethod(&window, "refreshDisplay"));
+    QVERIFY(plot->frame() != nullptr);
+    const std::uint64_t firstBenchmarkSequence = plot->frame()->metadata.sequence;
+    QVERIFY(QMetaObject::invokeMethod(&window, "refreshDisplay"));
+    QVERIFY(plot->frame()->metadata.sequence > firstBenchmarkSequence);
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("static")));
+    QVERIFY(QMetaObject::invokeMethod(&window, "refreshDisplay"));
+    const std::uint64_t staticBenchmarkSequence = plot->frame()->metadata.sequence;
+    QVERIFY(QMetaObject::invokeMethod(&window, "refreshDisplay"));
+    QCOMPARE(plot->frame()->metadata.sequence, staticBenchmarkSequence);
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("waterfall")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("waterfall"));
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("mixed")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("mixed"));
+    QVERIFY(window.setRenderBenchmarkMode(QStringLiteral("off")));
+    QCOMPARE(window.renderBenchmarkMode(), QStringLiteral("off"));
 }
 
 void MainWindowTests::unfocusedInputsIgnoreMouseWheelToPreventAccidentalChanges()

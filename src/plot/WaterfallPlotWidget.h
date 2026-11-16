@@ -2,6 +2,7 @@
 
 #include "core/SpectrumFrame.h"
 #include "plot/Colormap.h"
+#include "plot/RenderTiming.h"
 
 #include <QElapsedTimer>
 #include <QImage>
@@ -15,6 +16,13 @@
 class QRubberBand;
 
 namespace rtsa {
+
+struct WaterfallRenderDiagnostics {
+    TimingSummary ingest;
+    TimingSummary paint;
+    double lastIngestMilliseconds = 0.0;
+    double lastPaintMilliseconds = 0.0;
+};
 
 class WaterfallPlotWidget final : public QWidget {
     Q_OBJECT
@@ -33,6 +41,9 @@ public:
 
     QRect plotRect() const noexcept { return plotRect_; }
     double lastPaintMilliseconds() const noexcept { return lastPaintMilliseconds_; }
+    double lastIngestMilliseconds() const noexcept { return lastIngestMilliseconds_; }
+    WaterfallRenderDiagnostics renderDiagnostics() const;
+    void resetRenderDiagnostics();
 
 signals:
     void spanScaleRequested(double scaleFactor, double anchorFrequencyHz);
@@ -42,6 +53,7 @@ signals:
 
 protected:
     bool event(QEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -54,8 +66,12 @@ private:
     QRect calculatePlotRect() const;
     void updatePlotGeometry();
     void resizeImageBuffer(int width, int height);
-    void drawGridAndAxes(QPainter& painter);
-    void drawWaterfallImage(QPainter& painter);
+    void invalidateStaticLayer();
+    void rebuildStaticLayer();
+    void rebuildColorBarImage();
+    void drawAxisText(QPainter& painter);
+    void drawGridAndBorder(QPainter& painter);
+    void drawWaterfallImage(QPainter& painter, const QRect& dirtyRect);
     void drawColorBar(QPainter& painter);
     QString formatFrequency(double frequencyHz) const;
     QPoint mousePosition(const QMouseEvent* event) const;
@@ -71,13 +87,22 @@ private:
     std::uint64_t totalFramesAdded_ = 0;
     float referenceLevel_ = 0.0F;
     float bottomLevel_ = -140.0F;
+    double staticCenterFrequencyHz_ = 1.0e9;
+    double staticSpanHz_ = 200.0e6;
     ColormapPreset colormapPreset_ = ColormapPreset::ClassicRainbow;
     QVector<QRgb> colorTable_;
     std::vector<float> columnMaxAmplitudes_;
+    QImage colorBarImage_;
+    QImage staticLayer_;
+    bool staticLayerDirty_ = true;
 
     QElapsedTimer paintTimer_;
+    QElapsedTimer ingestTimer_;
     double lastPaintMilliseconds_ = 0.0;
+    double lastIngestMilliseconds_ = 0.0;
     bool lightTheme_ = false;
+    RollingTiming ingestTiming_;
+    RollingTiming paintTiming_;
 
     // Mouse drag interaction
     bool dragging_ = false;

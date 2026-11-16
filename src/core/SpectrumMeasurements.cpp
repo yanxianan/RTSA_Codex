@@ -46,9 +46,9 @@ BinRange mapRange(const SpectrumFrame& frame,
     const double firstPosition = (startHz - viewStartHz) / binWidthHz;
     const double endPosition = (stopHz - viewStartHz) / binWidthHz;
     const auto first = static_cast<std::size_t>(std::clamp(
-        std::ceil(firstPosition), 0.0, static_cast<double>(frame.bins.size())));
+        std::ceil(firstPosition), 0.0, static_cast<double>(frame.binCount())));
     const auto end = static_cast<std::size_t>(std::clamp(
-        std::ceil(endPosition), 0.0, static_cast<double>(frame.bins.size())));
+        std::ceil(endPosition), 0.0, static_cast<double>(frame.binCount())));
     if (first >= end) {
         return {};
     }
@@ -70,7 +70,7 @@ RangePeakMeasurement SpectrumMeasurements::peakInRange(
     std::size_t peakBin = range.first;
     float peak = -std::numeric_limits<float>::infinity();
     for (std::size_t bin = range.first; bin < range.end; ++bin) {
-        const float value = frame.bins[bin];
+        const float value = frame.binDb(bin);
         if (!std::isfinite(value)) {
             return {};
         }
@@ -101,7 +101,7 @@ ChannelPowerMeasurement SpectrumMeasurements::channelPowerInRange(
 
     double linearSum = 0.0;
     for (std::size_t bin = range.first; bin < range.end; ++bin) {
-        const double value = static_cast<double>(frame.bins[bin]);
+        const double value = static_cast<double>(frame.binDb(bin));
         if (!std::isfinite(value)) {
             return {};
         }

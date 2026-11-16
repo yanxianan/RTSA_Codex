@@ -14,6 +14,7 @@ class ExportTests final : public QObject {
 
 private slots:
     void writesCompleteCsvSnapshot();
+    void writesLogBinsCsvSnapshot();
     void rejectsInvalidFrameWithoutPartialFile();
     void writesDynamicUnitAndCalibrationMetadata_data();
     void writesDynamicUnitAndCalibrationMetadata();
@@ -48,6 +49,31 @@ void ExportTests::writesCompleteCsvSnapshot()
     QVERIFY(data.contains("bin,frequency_hz,amplitude_dbfs\n"));
     QVERIFY(data.contains("0,90000000.000000,-100.000000\n"));
     QVERIFY(data.contains("3,105000000.000000,-90.000000\n"));
+}
+
+void ExportTests::writesLogBinsCsvSnapshot()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    auto frame = std::make_shared<SpectrumFrame>();
+    frame->metadata.sequence = 7U;
+    frame->metadata.centerFrequencyHz = 0.0;
+    frame->metadata.spanHz = 4.0;
+    frame->metadata.binCount = 4U;
+    frame->metadata.unit = AmplitudeUnit::Dbfs;
+    frame->logBins = { -1000, -2000, -3000, -4000 };
+
+    const QString path = directory.filePath(QStringLiteral("log.csv"));
+    const ExportResult result = SpectrumExporter::writeCsv(frame, path);
+    QVERIFY2(result.success, qPrintable(result.errorMessage));
+    QCOMPARE(result.exportedBins, std::size_t(4U));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray data = file.readAll();
+    QVERIFY(data.contains("0,-2.000000,-10.000000\n"));
+    QVERIFY(data.contains("3,1.000000,-40.000000\n"));
 }
 
 void ExportTests::writesDynamicUnitAndCalibrationMetadata_data()

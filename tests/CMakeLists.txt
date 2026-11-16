@@ -39,6 +39,7 @@ add_executable(rtsa_plot_tests
     tst_Plot.cpp
     ../src/plot/RasterSpectrumRenderer.cpp
     ../src/plot/RasterSpectrumRenderer.h
+    ../src/plot/RenderTiming.h
     ../src/plot/SpectrumPlotWidget.cpp
     ../src/plot/SpectrumPlotWidget.h
 )
@@ -134,6 +135,7 @@ add_executable(rtsa_waterfall_tests
     tst_Waterfall.cpp
     ../src/plot/Colormap.cpp
     ../src/plot/Colormap.h
+    ../src/plot/RenderTiming.h
     ../src/plot/WaterfallPlotWidget.cpp
     ../src/plot/WaterfallPlotWidget.h
 )
@@ -154,6 +156,19 @@ set_tests_properties(rtsa_waterfall_tests PROPERTIES
     TIMEOUT 20
 )
 
+add_executable(rtsa_frame_codec_tests
+    tst_FrameCodec.cpp
+)
+
+target_link_libraries(rtsa_frame_codec_tests PRIVATE
+    rtsa_core
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Test
+)
+
+add_test(NAME rtsa_frame_codec_tests COMMAND rtsa_frame_codec_tests)
+set_tests_properties(rtsa_frame_codec_tests PROPERTIES TIMEOUT 10)
+
 add_executable(rtsa_gui_tests
     tst_MainWindow.cpp
     ../src/ui/ApplicationTheme.cpp
@@ -165,6 +180,7 @@ add_executable(rtsa_gui_tests
     ../src/plot/Colormap.h
     ../src/plot/RasterSpectrumRenderer.cpp
     ../src/plot/RasterSpectrumRenderer.h
+    ../src/plot/RenderTiming.h
     ../src/plot/SpectrumPlotWidget.cpp
     ../src/plot/SpectrumPlotWidget.h
     ../src/plot/WaterfallPlotWidget.cpp
@@ -187,6 +203,7 @@ add_executable(rtsa_gui_tests
     ../src/sources/SourceTypes.h
     ../src/ui/MainWindow.cpp
     ../src/ui/MainWindow.h
+    ../src/resources/rtsa.qrc
 )
 
 target_include_directories(rtsa_gui_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -208,6 +225,48 @@ set_tests_properties(rtsa_gui_tests PROPERTIES
 
 add_test(NAME rtsa_app_smoke
     COMMAND $<TARGET_FILE:rtsa_app> --source simulated --no-file-log --smoke-test-ms 750
+)
+
+add_test(NAME rtsa_app_render_direct_smoke
+    COMMAND $<TARGET_FILE:rtsa_app>
+        --source simulated
+        --render-mode direct
+        --display-fps 30
+        --render-diagnostics
+        --no-file-log
+        --smoke-test-ms 500
+)
+set_tests_properties(rtsa_app_render_direct_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 10
+)
+
+add_test(NAME rtsa_app_render_benchmark_static_smoke
+    COMMAND $<TARGET_FILE:rtsa_app>
+        --source simulated
+        --render-benchmark static
+        --render-mode offscreen
+        --display-fps 30
+        --no-file-log
+        --smoke-test-ms 500
+)
+set_tests_properties(rtsa_app_render_benchmark_static_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 10
+)
+
+add_test(NAME rtsa_app_render_benchmark_mixed_smoke
+    COMMAND $<TARGET_FILE:rtsa_app>
+        --source simulated
+        --render-benchmark mixed
+        --render-mode offscreen
+        --display-fps 30
+        --no-file-log
+        --smoke-test-ms 500
+)
+set_tests_properties(rtsa_app_render_benchmark_mixed_smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 10
 )
 
 add_test(NAME rtsa_app_scenario_smoke
@@ -256,10 +315,18 @@ add_test(NAME rtsa_app_missing_scenario
         -DEXPECTED_EXIT=6
         -P ${CMAKE_CURRENT_SOURCE_DIR}/VerifyAppExit.cmake
 )
+add_test(NAME rtsa_app_invalid_render_benchmark
+    COMMAND ${CMAKE_COMMAND}
+        -DAPP=$<TARGET_FILE:rtsa_app>
+        -DMODE=invalid-render-benchmark
+        -DEXPECTED_EXIT=7
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/VerifyAppExit.cmake
+)
 set_tests_properties(
     rtsa_app_invalid_source
     rtsa_app_scenario_source_mismatch
     rtsa_app_missing_scenario
+    rtsa_app_invalid_render_benchmark
     PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
@@ -290,13 +357,19 @@ if(WIN32)
         rtsa_settings_tests
         rtsa_logging_tests
         rtsa_scenario_tests
+        rtsa_waterfall_tests
+        rtsa_frame_codec_tests
         rtsa_gui_tests
         rtsa_app_smoke
+        rtsa_app_render_direct_smoke
+        rtsa_app_render_benchmark_static_smoke
+        rtsa_app_render_benchmark_mixed_smoke
         rtsa_app_scenario_smoke
         rtsa_app_fault_scenario_smoke
         rtsa_app_invalid_source
         rtsa_app_scenario_source_mismatch
         rtsa_app_missing_scenario
+        rtsa_app_invalid_render_benchmark
         APPEND PROPERTY ENVIRONMENT "PATH=${RTSA_TEST_RUNTIME_PATH}"
     )
 endif()

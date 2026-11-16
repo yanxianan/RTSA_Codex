@@ -20,6 +20,7 @@ private slots:
     void waterfallClearResetsBuffer();
     void waterfallSignalsEmitOnInteraction();
     void waterfallOffscreenPaintPerformance();
+    void waterfallDiagnosticsRecordIngestAndPaint();
     void waterfallAlwaysPlacesNewestFrameAtTop();
     void historyIsPreservedAcrossParameterChangesAndResize();
     void fullScreenResizeResamplesHistoryWithoutDisplacementOrBlackVoid();
@@ -142,6 +143,37 @@ void WaterfallTests::waterfallOffscreenPaintPerformance()
     const double paintMs = static_cast<double>(timer.nsecsElapsed()) / 1.0e6;
     qInfo().nospace() << "Waterfall 1920x600 CPU Raster paint time: " << paintMs << " ms";
     QVERIFY2(paintMs < 50.0, "Waterfall CPU Raster render exceeded 50 ms");
+}
+
+void WaterfallTests::waterfallDiagnosticsRecordIngestAndPaint()
+{
+    WaterfallPlotWidget widget;
+    widget.resize(1280, 480);
+    widget.setHistoryDepth(128);
+    widget.setAmplitudeScale(0.0F, -100.0F);
+
+    auto frame = std::make_shared<SpectrumFrame>();
+    frame->metadata.sequence = 1;
+    frame->metadata.binCount = 4096;
+    frame->metadata.centerFrequencyHz = 1.0e9;
+    frame->metadata.spanHz = 100.0e6;
+    frame->bins.assign(4096, -90.0F);
+    widget.addFrame(frame);
+    QVERIFY(widget.lastIngestMilliseconds() >= 0.0);
+
+    QImage image(widget.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    widget.render(&painter);
+    painter.end();
+
+    const WaterfallRenderDiagnostics diagnostics = widget.renderDiagnostics();
+    QVERIFY(diagnostics.ingest.lastMs >= 0.0);
+    QVERIFY(diagnostics.paint.lastMs >= 0.0);
+
+    widget.resetRenderDiagnostics();
+    QCOMPARE(widget.renderDiagnostics().ingest.lastMs, 0.0);
+    QCOMPARE(widget.renderDiagnostics().paint.lastMs, 0.0);
 }
 
 void WaterfallTests::waterfallAlwaysPlacesNewestFrameAtTop()

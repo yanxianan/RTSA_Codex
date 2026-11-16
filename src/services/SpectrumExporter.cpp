@@ -59,14 +59,14 @@ ExportResult SpectrumExporter::writeCsv(const ConstSpectrumFramePtr& frame,
 
     QByteArray line;
     line.reserve(96);
-    for (std::size_t index = 0; index < frame->bins.size(); ++index) {
+    for (std::size_t index = 0; index < frame->binCount(); ++index) {
         line.clear();
         line += QByteArray::number(static_cast<qulonglong>(index));
         line += ',';
         line += QByteArray::number(
             FrequencyMapper::frequencyForBin(metadata, index), 'f', 6);
         line += ',';
-        line += QByteArray::number(static_cast<double>(frame->bins[index]), 'f', 6);
+        line += QByteArray::number(static_cast<double>(frame->binDb(index)), 'f', 6);
         line += '\n';
         if (!writeAll(file, line)) {
             return failure(filePath, file.errorString());
@@ -76,7 +76,7 @@ ExportResult SpectrumExporter::writeCsv(const ConstSpectrumFramePtr& frame,
     if (!file.commit()) {
         return failure(filePath, file.errorString());
     }
-    return ExportResult { true, filePath, {}, frame->bins.size() };
+    return ExportResult { true, filePath, {}, frame->binCount() };
 }
 
 } // namespace rtsa

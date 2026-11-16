@@ -25,6 +25,8 @@ struct FramePool::State {
             return;
         }
         frame->metadata = SpectrumMetadata {};
+        frame->bins.clear();
+        frame->logBins.clear();
         std::lock_guard<std::mutex> lock(mutex);
         available.push_back(frame);
     }
@@ -63,6 +65,36 @@ SpectrumFramePtr FramePool::acquire(const std::size_t binCount)
     frame->metadata = SpectrumMetadata {};
     frame->metadata.binCount = static_cast<std::uint32_t>(binCount);
     frame->bins.resize(binCount);
+    frame->logBins.clear();
+
+    const auto state = state_;
+    return SpectrumFramePtr(frame, [state](SpectrumFrame* released) {
+        state->release(released);
+    });
+}
+
+SpectrumFramePtr FramePool::acquireLog(const std::size_t binCount)
+{
+    SpectrumFrame* frame = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (!state_->available.empty()) {
+            frame = state_->available.back();
+            state_->available.pop_back();
+        } else if (state_->allocated < state_->maximumFrames) {
+            frame = new SpectrumFrame();
+            ++state_->allocated;
+        }
+    }
+
+    if (frame == nullptr) {
+        return {};
+    }
+
+    frame->metadata = SpectrumMetadata {};
+    frame->metadata.binCount = static_cast<std::uint32_t>(binCount);
+    frame->bins.clear();
+    frame->logBins.resize(binCount);
 
     const auto state = state_;
     return SpectrumFramePtr(frame, [state](SpectrumFrame* released) {

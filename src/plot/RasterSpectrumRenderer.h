@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -37,6 +38,14 @@ struct RenderContext {
     std::size_t activeMarkerIndex = 0;
 };
 
+struct RasterRenderTiming {
+    double geometryMs = 0.0;
+    double staticBuildMs = 0.0;
+    double staticRestoreMs = 0.0;
+    double traceMs = 0.0;
+    double totalMs = 0.0;
+};
+
 class RasterSpectrumRenderer final {
 public:
     void setViewport(const QSize& widgetSize, const QRect& plotRect);
@@ -51,19 +60,25 @@ public:
         const std::array<std::optional<std::size_t>, kSpectrumMarkerCount>& markerBins,
         std::size_t activeMarkerIndex);
     void invalidateStaticLayer();
+    void resetFrameTimings();
 
     RenderContext currentContext() const;
     void renderToImage(const RenderContext& ctx, QImage& targetImage);
+    void renderToImage(const RenderContext& ctx, QImage& targetImage,
+                       std::uint64_t& targetStaticLayerGeneration);
 
     void paint(QPainter& painter);
 
     QRect plotRect() const noexcept;
     std::size_t envelopeColumnCount() const noexcept;
     std::optional<std::size_t> markerBin(std::size_t markerIndex) const noexcept;
+    std::uint64_t staticLayerGeneration() const noexcept;
+    RasterRenderTiming lastTimings() const noexcept;
 
 private:
     void rebuildStaticLayer();
     void rebuildGeometry();
+    void restorePlotBackground(QImage& targetImage) const;
     void drawTraceAndMarkers(QPainter& painter);
     int yForAmplitude(float amplitude) const noexcept;
     QString formatFrequency(double frequencyHz) const;
@@ -73,6 +88,7 @@ private:
     QRect plotRect_;
     QImage staticLayer_;
     bool staticLayerDirty_ = true;
+    std::uint64_t staticLayerGeneration_ = 0U;
     float referenceLevel_ = 0.0F;
     float bottomLevel_ = -140.0F;
     QColor traceColor_ { 0, 235, 180 };
@@ -87,6 +103,7 @@ private:
     QVector<QPoint> peakPolyline_;
     std::array<std::optional<std::size_t>, kSpectrumMarkerCount> markerBins_;
     std::size_t activeMarkerIndex_ = 0;
+    RasterRenderTiming lastTimings_;
 };
 
 } // namespace rtsa

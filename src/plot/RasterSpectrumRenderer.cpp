@@ -4,6 +4,7 @@
 #include "core/FrequencyMapper.h"
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QFontMetrics>
 #include <QPainter>
 #include <QPen>
@@ -101,6 +102,11 @@ void RasterSpectrumRenderer::invalidateStaticLayer()
     staticLayerDirty_ = true;
 }
 
+void RasterSpectrumRenderer::resetFrameTimings()
+{
+    lastTimings_ = {};
+}
+
 RenderContext RasterSpectrumRenderer::currentContext() const
 {
     RenderContext ctx;
@@ -121,6 +127,19 @@ RenderContext RasterSpectrumRenderer::currentContext() const
 
 void RasterSpectrumRenderer::renderToImage(const RenderContext& ctx, QImage& targetImage)
 {
+    std::uint64_t targetStaticLayerGeneration = 0U;
+    renderToImage(ctx, targetImage, targetStaticLayerGeneration);
+}
+
+void RasterSpectrumRenderer::renderToImage(
+    const RenderContext& ctx,
+    QImage& targetImage,
+    std::uint64_t& targetStaticLayerGeneration)
+{
+    resetFrameTimings();
+    QElapsedTimer totalTimer;
+    totalTimer.start();
+
     setViewport(ctx.widgetSize, ctx.plotRect);
     setAmplitudeScale(ctx.referenceLevel, ctx.bottomLevel);
     setAppearance(ctx.traceColor, ctx.traceWidth, ctx.gridVisible, ctx.themeIndex, ctx.customBgColor);
@@ -128,38 +147,70 @@ void RasterSpectrumRenderer::renderToImage(const RenderContext& ctx, QImage& tar
     setMarkerBins(ctx.markerBins, ctx.activeMarkerIndex);
 
     if (staticLayerDirty_) {
+        QElapsedTimer staticBuildTimer;
+        staticBuildTimer.start();
         rebuildStaticLayer();
+        lastTimings_.staticBuildMs +=
+            static_cast<double>(staticBuildTimer.nsecsElapsed()) / 1.0e6;
     }
 
     if (staticLayer_.isNull()) {
         targetImage = QImage();
+        targetStaticLayerGeneration = 0U;
+        lastTimings_.totalMs = static_cast<double>(totalTimer.nsecsElapsed()) / 1.0e6;
         return;
     }
 
-    // 关键优化：复用 targetImage 内存缓冲区，彻底消除每帧 8.3MB 的堆内存 malloc/free
-    if (targetImage.size() != ctx.widgetSize || targetImage.format() != staticLayer_.format()) {
+    QElapsedTimer staticRestoreTimer;
+    staticRestoreTimer.start();
+    const bool fullStaticRestore =
+        targetImage.size() != ctx.widgetSize
+        || targetImage.format() != staticLayer_.format()
+        || targetStaticLayerGeneration != staticLayerGeneration_;
+    if (fullStaticRestore) {
         targetImage = staticLayer_.copy();
+        targetStaticLayerGeneration = staticLayerGeneration_;
     } else {
-        std::memcpy(targetImage.bits(), staticLayer_.constBits(),
-                    static_cast<size_t>(staticLayer_.sizeInBytes()));
+        restorePlotBackground(targetImage);
     }
+    lastTimings_.staticRestoreMs +=
+        static_cast<double>(staticRestoreTimer.nsecsElapsed()) / 1.0e6;
 
+    QElapsedTimer traceTimer;
+    traceTimer.start();
     QPainter painter(&targetImage);
     drawTraceAndMarkers(painter);
     painter.end();
+    lastTimings_.traceMs +=
+        static_cast<double>(traceTimer.nsecsElapsed()) / 1.0e6;
+    lastTimings_.totalMs = static_cast<double>(totalTimer.nsecsElapsed()) / 1.0e6;
 }
 
 void RasterSpectrumRenderer::paint(QPainter& painter)
 {
+    QElapsedTimer totalTimer;
+    totalTimer.start();
+    lastTimings_.staticBuildMs = 0.0;
+    lastTimings_.staticRestoreMs = 0.0;
+
     if (staticLayerDirty_) {
+        QElapsedTimer staticBuildTimer;
+        staticBuildTimer.start();
         rebuildStaticLayer();
+        lastTimings_.staticBuildMs +=
+            static_cast<double>(staticBuildTimer.nsecsElapsed()) / 1.0e6;
     }
 
     if (!staticLayer_.isNull()) {
         painter.drawImage(QPoint(0, 0), staticLayer_);
     }
 
+    QElapsedTimer traceTimer;
+    traceTimer.start();
     drawTraceAndMarkers(painter);
+    lastTimings_.traceMs =
+        static_cast<double>(traceTimer.nsecsElapsed()) / 1.0e6;
+    lastTimings_.totalMs = static_cast<double>(totalTimer.nsecsElapsed()) / 1.0e6;
 }
 
 void RasterSpectrumRenderer::drawTraceAndMarkers(QPainter& painter)
@@ -175,7 +226,7 @@ void RasterSpectrumRenderer::drawTraceAndMarkers(QPainter& painter)
         painter.drawPolyline(peakPolyline_.constData(), peakPolyline_.size());
     }
 
-    if (frame_ && !frame_->bins.empty() && plotRect_.width() > 10 && plotRect_.height() > 10) {
+    if (frame_ && frame_->binCount() > 0U && plotRect_.width() > 10 && plotRect_.height() > 10) {
         const std::array<QColor, kSpectrumMarkerCount> colors {
             QColor(255, 213, 79),  // M1: 琥珀金黄 (Amber Yellow)
             QColor(0, 229, 255),   // M2: 科技青蓝 (Electric Cyan)
@@ -192,13 +243,13 @@ void RasterSpectrumRenderer::drawTraceAndMarkers(QPainter& painter)
                 continue;
             }
             const std::size_t bin = std::min(
-                *markerBins_[markerIndex], frame_->bins.size() - 1U);
-            const double ratio = frame_->bins.size() > 1
-                ? static_cast<double>(bin) / static_cast<double>(frame_->bins.size() - 1U)
+                *markerBins_[markerIndex], frame_->binCount() - 1U);
+            const double ratio = frame_->binCount() > 1
+                ? static_cast<double>(bin) / static_cast<double>(frame_->binCount() - 1U)
                 : 0.0;
             const int x = plotRect_.left() + static_cast<int>(std::lround(
                 ratio * static_cast<double>(plotRect_.width() - 1)));
-            const float rawAmp = frame_->bins[bin];
+            const float rawAmp = frame_->binDb(bin);
             const float safeAmp = std::isfinite(rawAmp) ? rawAmp : bottomLevel_;
             const int y = std::clamp(yForAmplitude(safeAmp), minY, maxY);
             const bool active = markerIndex == activeMarkerIndex_;
@@ -270,9 +321,20 @@ std::optional<std::size_t> RasterSpectrumRenderer::markerBin(
         ? markerBins_[markerIndex] : std::optional<std::size_t> {};
 }
 
+std::uint64_t RasterSpectrumRenderer::staticLayerGeneration() const noexcept
+{
+    return staticLayerGeneration_;
+}
+
+RasterRenderTiming RasterSpectrumRenderer::lastTimings() const noexcept
+{
+    return lastTimings_;
+}
+
 void RasterSpectrumRenderer::rebuildStaticLayer()
 {
     staticLayerDirty_ = false;
+    ++staticLayerGeneration_;
     if (widgetSize_.isEmpty()) {
         staticLayer_ = QImage();
         return;
@@ -403,23 +465,56 @@ void RasterSpectrumRenderer::rebuildStaticLayer()
     painter.restore();
 }
 
+void RasterSpectrumRenderer::restorePlotBackground(QImage& targetImage) const
+{
+    if (targetImage.format() != QImage::Format_RGB16
+        || staticLayer_.format() != targetImage.format()) {
+        return;
+    }
+
+    const QRect restoreRect = plotRect_.intersected(targetImage.rect());
+    if (restoreRect.isEmpty()) {
+        return;
+    }
+
+    const int bytesPerPixel = 2;
+    const int copyBytes = restoreRect.width() * bytesPerPixel;
+    for (int y = restoreRect.top(); y <= restoreRect.bottom(); ++y) {
+        const uchar* source = staticLayer_.constScanLine(y)
+            + restoreRect.left() * bytesPerPixel;
+        uchar* destination = targetImage.scanLine(y)
+            + restoreRect.left() * bytesPerPixel;
+        std::memcpy(destination, source, static_cast<std::size_t>(copyBytes));
+    }
+}
+
 void RasterSpectrumRenderer::rebuildGeometry()
 {
+    QElapsedTimer geometryTimer;
+    geometryTimer.start();
     envelope_.clear();
     envelopeLines_.clear();
     peakPolyline_.clear();
     geometrySequence_ = 0;
 
     if (!frame_ || !frame_->isConsistent() || plotRect_.width() <= 0 || plotRect_.height() <= 0) {
+        lastTimings_.geometryMs +=
+            static_cast<double>(geometryTimer.nsecsElapsed()) / 1.0e6;
         return;
     }
 
-    EnvelopeReducer::reduce(frame_->bins.data(),
-                            frame_->bins.size(),
-                            static_cast<std::size_t>(plotRect_.width()),
-                            envelope_);
-    // envelopeLines_.reserve(static_cast<qsizetype>(envelope_.size()));
-    peakPolyline_.reserve(static_cast<qsizetype>(envelope_.size()));
+    if (frame_->usesLogBins()) {
+        EnvelopeReducer::reduce(frame_->logBins.data(),
+                                frame_->logBins.size(),
+                                static_cast<std::size_t>(plotRect_.width()),
+                                envelope_);
+    } else {
+        EnvelopeReducer::reduce(frame_->bins.data(),
+                                frame_->bins.size(),
+                                static_cast<std::size_t>(plotRect_.width()),
+                                envelope_);
+    }
+    peakPolyline_.reserve(static_cast<int>(envelope_.size()));
 
     const double horizontalScale = envelope_.size() > 1U
         ? static_cast<double>(plotRect_.width() - 1)
@@ -437,6 +532,8 @@ void RasterSpectrumRenderer::rebuildGeometry()
         peakPolyline_.append(QPoint(x, topY));
     }
     geometrySequence_ = frame_->metadata.sequence;
+    lastTimings_.geometryMs +=
+        static_cast<double>(geometryTimer.nsecsElapsed()) / 1.0e6;
 }
 
 int RasterSpectrumRenderer::yForAmplitude(const float amplitude) const noexcept

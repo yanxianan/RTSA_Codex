@@ -2,6 +2,7 @@
 
 #include "core/SpectrumFrame.h"
 #include "plot/RasterSpectrumRenderer.h"
+#include "plot/RenderTiming.h"
 
 #include <QElapsedTimer>
 #include <QPoint>
@@ -12,11 +13,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <optional>
-#include <thread>
 
 class QRubberBand;
+class QThread;
 
 namespace rtsa {
 
@@ -33,15 +35,37 @@ struct DeltaMarkerMeasurement {
     float amplitudeDelta = 0.0F;
 };
 
+struct SpectrumRenderDiagnostics {
+    TimingSummary renderTotal;
+    TimingSummary geometry;
+    TimingSummary staticBuild;
+    TimingSummary staticRestore;
+    TimingSummary trace;
+    TimingSummary guiPaint;
+    std::uint64_t pendingOverwriteCount = 0U;
+    std::uint64_t syncFallbackCount = 0U;
+    std::uint64_t directPaintCount = 0U;
+    std::uint64_t offscreenPaintCount = 0U;
+    double lastPaintMilliseconds = 0.0;
+    bool lastPaintOffscreen = false;
+};
+
 class SpectrumPlotWidget final : public QWidget {
     Q_OBJECT
 
 public:
+    enum class RenderMode {
+        Direct,
+        Offscreen
+    };
+
     explicit SpectrumPlotWidget(QWidget* parent = nullptr);
     ~SpectrumPlotWidget() override;
 
     void setFrame(ConstSpectrumFramePtr frame);
     ConstSpectrumFramePtr frame() const noexcept;
+    void setRenderMode(RenderMode mode);
+    RenderMode renderMode() const noexcept;
     void setAmplitudeScale(float referenceLevel, float bottomLevel);
     void setAppearance(const QColor& traceColor, int traceWidth,
                        bool gridVisible, int themeIndex,
@@ -74,6 +98,8 @@ public:
     double lastPaintMilliseconds() const noexcept;
     bool isLastPaintOffscreen() const noexcept;
     QRect plotRect() const;
+    SpectrumRenderDiagnostics renderDiagnostics() const;
+    void resetRenderDiagnostics();
 
 signals:
     void markerChanged(double frequencyHz, float amplitude,
@@ -125,11 +151,19 @@ private:
     QRubberBand* zoomBand_ = nullptr;
 
     void invalidateFrontImageAndRerender();
+    bool enqueueLatestRenderContext();
+    void startRenderWorker();
+    void stopRenderWorker();
+    void recordOffscreenRender(double totalMilliseconds,
+                               const RasterRenderTiming& timings);
+    void recordDirectRender(double totalMilliseconds,
+                            const RasterRenderTiming& timings);
+    void recordGuiPaint(double milliseconds);
     void workerLoop();
 
     // 方案二：多核异步离屏渲染工作线程与双缓冲
     RasterSpectrumRenderer offscreenRenderer_;
-    std::thread renderWorker_;
+    QThread* renderWorker_ = nullptr;
     std::mutex taskMutex_;
     std::condition_variable taskCv_;
     std::atomic<bool> workerStopping_{false};
@@ -138,8 +172,26 @@ private:
 
     std::mutex frontImageMutex_;
     QImage frontImage_;
+    std::uint64_t frontStaticLayerGeneration_ = 0U;
+    std::uint64_t frontPublicationSequence_ = 0U;
+    std::uint64_t frontTimestampNs_ = 0U;
     bool hasFrontImage_{false};
     bool lastPaintOffscreen_ = false;
+
+    RenderMode renderMode_ = RenderMode::Offscreen;
+    std::atomic<std::uint64_t> pendingOverwriteCount_ { 0U };
+    std::atomic<std::uint64_t> syncFallbackCount_ { 0U };
+    std::atomic<std::uint64_t> directPaintCount_ { 0U };
+    std::atomic<std::uint64_t> offscreenPaintCount_ { 0U };
+
+    mutable std::mutex metricsMutex_;
+    std::mutex paintRenderMutex_;
+    RollingTiming renderTotalTiming_;
+    RollingTiming geometryTiming_;
+    RollingTiming staticBuildTiming_;
+    RollingTiming staticRestoreTiming_;
+    RollingTiming traceTiming_;
+    RollingTiming guiPaintTiming_;
 };
 
 } // namespace rtsa

@@ -16,6 +16,7 @@ public:
     FramePool& operator=(const FramePool&) = delete;
 
     SpectrumFramePtr acquire(std::size_t binCount);
+    SpectrumFramePtr acquireLog(std::size_t binCount);
     std::size_t allocatedCount() const;
     std::size_t availableCount() const;
 

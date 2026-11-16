@@ -93,11 +93,12 @@
 /* ===== 7. PL 端 AXI-BRAM 与 RF-ADC 驱动 ===== */
 &axi_bram_ctrl_0 {
 	compatible = "generic-uio";
+	linux,uio-name = "rtsa_regs";
 	status = "okay";
 };
 &usp_rf_data_converter_0 {
 	compatible = "xlnx,usp-rf-data-converter-2.6";
-	uio-name = "uio4";
+	linux,uio-name = "uio4";
 	uio-offset = <0x40000>;
 	interrupts = <0 89 4>;
 };

@@ -17,11 +17,26 @@ namespace rtsa {
 struct DmaSourceConfig {
     QString devicePath = QStringLiteral("/dev/rtsa_dma");
     std::size_t binCount = 1024;
+    std::uint32_t frameBytes = 64U + 1024U * 2U;
+    std::uint64_t hardwareSpanHz = 9765625U;
     double centerFrequencyHz = 1.0e9;
     double spanHz = 200.0e6;
     double uiRefreshRateHz = 60.0;             // 界面显示节流目标刷新率（默认 60 fps）
-    bool enableFftShift = false;               // 是否进行 FFT Shift（DC 置中）
-    float fullScaleMagnitude = 2147483648.0f;  // 2^31 满量程归一化基准
+    std::uint8_t traceMode = 1U;               // PL default: Max Hold
+    std::uint16_t accumulationFrames = 80U;
+    std::uint8_t dmaMode = 1U;                 // 1=DDS, 2=RFADC0, 3=RFADC1
+    std::uint16_t cicRate = 8U;                // 1=CIC bypass, 4..8192 normal
+    std::uint8_t cicTrunc = 31U;               // 0..80
+    std::uint8_t hbLevel = 2U;                 // 0..6
+    std::uint16_t maxHoldFrames = 80U;
+    double ddsFrequencyHz = 1.5e6;
+    std::uint8_t windowType = 4U;              // Blackman-Harris
+    std::int32_t calibrationOffsetQ16_16 = -12451840; // -190.0 dB
+    std::uint16_t configEpoch = 1U;
+    // Kept for source compatibility with the old simulation/DMA configuration.
+    // The DMA payload now carries dBFS values and FFT-shift metadata in its header.
+    bool enableFftShift = false;
+    float fullScaleMagnitude = 2147483648.0f;
 };
 
 class DmaSpectrumSource final : public ISpectrumSource {
@@ -50,6 +65,7 @@ private:
     void runGuarded() noexcept;
     void run();
     void setState(SourceState state);
+    void wakeWorker() noexcept;
 
     mutable std::mutex mutex_;
     DmaSourceConfig config_;
@@ -65,6 +81,9 @@ private:
     std::atomic<std::uint64_t> producedFrames_ { 0 };
     std::atomic<std::uint64_t> producedBytes_ { 0 };
     std::atomic<std::uint64_t> droppedFrames_ { 0 };
+    std::atomic<std::uint64_t> configGeneration_ { 0 };
+    std::atomic<int> wakeFd_ { -1 };
+    mutable std::mutex wakeMutex_;
 
     std::chrono::steady_clock::time_point statisticsStart_;
     std::atomic<std::uint64_t> statisticsStopNs_ { 0 };
