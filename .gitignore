@@ -13,3 +13,20 @@ driver/DMA/dma_benchmark
 test_output.txt
 .DS_Store
 Thumbs.db
+
+# Vivado generated build artifacts
+DMA_2026_1012/.Xil/
+DMA_2026_1012/DMA_2026_1012.cache/
+DMA_2026_1012/DMA_2026_1012.gen/
+DMA_2026_1012/DMA_2026_1012.hw/
+DMA_2026_1012/DMA_2026_1012.ip_user_files/
+DMA_2026_1012/DMA_2026_1012.runs/
+DMA_2026_1012/DMA_2026_1012.sim/
+DMA_2026_1012/DMA_2026_1012.srcs/utils_1/imports/synth_1/
+DMA_2026_1012/*.bit
+DMA_2026_1012/*.xsa
+DMA_2026_1012/vivado*.log
+DMA_2026_1012/vivado*.jou
+
+# CTest output
+Testing/

@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wave_config>
+   <wave_state>
+   </wave_state>
+   <db_ref_list>
+      <db_ref path="tb_logic_top_modified_behav.wdb" id="1">
+         <top_modules>
+            <top_module name="glbl" />
+            <top_module name="tb_logic_top_modified" />
+         </top_modules>
+      </db_ref>
+   </db_ref_list>
+   <zoom_setting>
+      <ZoomStartTime time="0.137600 us"></ZoomStartTime>
+      <ZoomEndTime time="186.937601 us"></ZoomEndTime>
+      <Cursor1Time time="217.937600 us"></Cursor1Time>
+   </zoom_setting>
+   <column_width_setting>
+      <NameColumnWidth column_width="370"></NameColumnWidth>
+      <ValueColumnWidth column_width="264"></ValueColumnWidth>
+   </column_width_setting>
+   <WVObjectSize size="61" />
+   <wvobject fp_name="/tb_logic_top_modified/logic_clk" type="logic">
+      <obj_property name="ElementShortName">logic_clk</obj_property>
+      <obj_property name="ObjectShortName">logic_clk</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_clk" type="logic">
+      <obj_property name="ElementShortName">axi_bram_clk</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_clk</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/w_clk" type="logic">
+      <obj_property name="ElementShortName">w_clk</obj_property>
+      <obj_property name="ObjectShortName">w_clk</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/r_rst" type="logic">
+      <obj_property name="ElementShortName">r_rst</obj_property>
+      <obj_property name="ObjectShortName">r_rst</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/w_rst" type="logic">
+      <obj_property name="ElementShortName">w_rst</obj_property>
+      <obj_property name="ObjectShortName">w_rst</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_rst" type="logic">
+      <obj_property name="ElementShortName">axi_bram_rst</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_rst</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_addr" type="array">
+      <obj_property name="ElementShortName">axi_bram_addr[12:0]</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_addr[12:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_wd_din" type="array">
+      <obj_property name="ElementShortName">axi_bram_wd_din[31:0]</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_wd_din[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_en" type="logic">
+      <obj_property name="ElementShortName">axi_bram_en</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_en</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_we" type="array">
+      <obj_property name="ElementShortName">axi_bram_we[3:0]</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_we[3:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/axi_bram_rd_dout" type="array">
+      <obj_property name="ElementShortName">axi_bram_rd_dout[31:0]</obj_property>
+      <obj_property name="ObjectShortName">axi_bram_rd_dout[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/m_axis_data_tdata" type="array">
+      <obj_property name="ElementShortName">m_axis_data_tdata[63:0]</obj_property>
+      <obj_property name="ObjectShortName">m_axis_data_tdata[63:0]</obj_property>
+      <obj_property name="WaveformStyle">STYLE_DIGITAL</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+      <obj_property name="AnalogYRangeMin">-6.86847e+17</obj_property>
+      <obj_property name="AnalogYRRangeMax">8.53652e+18</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/m_axis_data_tkeep" type="array">
+      <obj_property name="ElementShortName">m_axis_data_tkeep[7:0]</obj_property>
+      <obj_property name="ObjectShortName">m_axis_data_tkeep[7:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/m_axis_data_tvalid" type="logic">
+      <obj_property name="ElementShortName">m_axis_data_tvalid</obj_property>
+      <obj_property name="ObjectShortName">m_axis_data_tvalid</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/m_axis_data_tlast" type="logic">
+      <obj_property name="ElementShortName">m_axis_data_tlast</obj_property>
+      <obj_property name="ObjectShortName">m_axis_data_tlast</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/m_axis_data_tready" type="logic">
+      <obj_property name="ElementShortName">m_axis_data_tready</obj_property>
+      <obj_property name="ObjectShortName">m_axis_data_tready</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/datapath_rst_n" type="logic">
+      <obj_property name="ElementShortName">datapath_rst_n</obj_property>
+      <obj_property name="ObjectShortName">datapath_rst_n</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dec_data" type="array">
+      <obj_property name="ElementShortName">dec_data[63:0]</obj_property>
+      <obj_property name="ObjectShortName">dec_data[63:0]</obj_property>
+      <obj_property name="WaveformStyle">STYLE_DIGITAL</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dec_valid" type="logic">
+      <obj_property name="ElementShortName">dec_valid</obj_property>
+      <obj_property name="ObjectShortName">dec_valid</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/frame_data" type="array">
+      <obj_property name="ElementShortName">frame_data[63:0]</obj_property>
+      <obj_property name="ObjectShortName">frame_data[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/frame_valid" type="logic">
+      <obj_property name="ElementShortName">frame_valid</obj_property>
+      <obj_property name="ObjectShortName">frame_valid</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_data" type="array">
+      <obj_property name="ElementShortName">raw_data[63:0]</obj_property>
+      <obj_property name="ObjectShortName">raw_data[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_valid" type="logic">
+      <obj_property name="ElementShortName">raw_valid</obj_property>
+      <obj_property name="ObjectShortName">raw_valid</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_ready" type="logic">
+      <obj_property name="ElementShortName">raw_ready</obj_property>
+      <obj_property name="ObjectShortName">raw_ready</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_last" type="logic">
+      <obj_property name="ElementShortName">raw_last</obj_property>
+      <obj_property name="ObjectShortName">raw_last</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/first_frame" type="array">
+      <obj_property name="ElementShortName">first_frame[0:1023][63:0]</obj_property>
+      <obj_property name="ObjectShortName">first_frame[0:1023][63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/max_data" type="array">
+      <obj_property name="ElementShortName">max_data[0:1023][63:0]</obj_property>
+      <obj_property name="ObjectShortName">max_data[0:1023][63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/max_power" type="array">
+      <obj_property name="ElementShortName">max_power[0:1023][63:0]</obj_property>
+      <obj_property name="ObjectShortName">max_power[0:1023][63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/cycles" type="array">
+      <obj_property name="ElementShortName">cycles[31:0]</obj_property>
+      <obj_property name="ObjectShortName">cycles[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/previous_dec_cycle" type="array">
+      <obj_property name="ElementShortName">previous_dec_cycle[31:0]</obj_property>
+      <obj_property name="ObjectShortName">previous_dec_cycle[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dec_count" type="array">
+      <obj_property name="ElementShortName">dec_count[31:0]</obj_property>
+      <obj_property name="ObjectShortName">dec_count[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/sample_count" type="array">
+      <obj_property name="ElementShortName">sample_count[31:0]</obj_property>
+      <obj_property name="ObjectShortName">sample_count[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/frame_beat" type="array">
+      <obj_property name="ElementShortName">frame_beat[31:0]</obj_property>
+      <obj_property name="ObjectShortName">frame_beat[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/frame_count" type="array">
+      <obj_property name="ElementShortName">frame_count[31:0]</obj_property>
+      <obj_property name="ObjectShortName">frame_count[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_beat" type="array">
+      <obj_property name="ElementShortName">raw_beat[31:0]</obj_property>
+      <obj_property name="ObjectShortName">raw_beat[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/raw_frames" type="array">
+      <obj_property name="ElementShortName">raw_frames[31:0]</obj_property>
+      <obj_property name="ObjectShortName">raw_frames[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/spectrum_beat" type="array">
+      <obj_property name="ElementShortName">spectrum_beat[31:0]</obj_property>
+      <obj_property name="ObjectShortName">spectrum_beat[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/spectrum_frames" type="array">
+      <obj_property name="ElementShortName">spectrum_frames[31:0]</obj_property>
+      <obj_property name="ObjectShortName">spectrum_frames[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/trigger_pulses" type="array">
+      <obj_property name="ElementShortName">trigger_pulses[31:0]</obj_property>
+      <obj_property name="ObjectShortName">trigger_pulses[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/arm_pulses" type="array">
+      <obj_property name="ElementShortName">arm_pulses[31:0]</obj_property>
+      <obj_property name="ObjectShortName">arm_pulses[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/expected_first_sample" type="array">
+      <obj_property name="ElementShortName">expected_first_sample[31:0]</obj_property>
+      <obj_property name="ObjectShortName">expected_first_sample[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/peak_bin" type="array">
+      <obj_property name="ElementShortName">peak_bin[31:0]</obj_property>
+      <obj_property name="ObjectShortName">peak_bin[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/i" type="array">
+      <obj_property name="ElementShortName">i[31:0]</obj_property>
+      <obj_property name="ObjectShortName">i[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/real_value" type="array">
+      <obj_property name="ElementShortName">real_value[63:0]</obj_property>
+      <obj_property name="ObjectShortName">real_value[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/imag_value" type="array">
+      <obj_property name="ElementShortName">imag_value[63:0]</obj_property>
+      <obj_property name="ObjectShortName">imag_value[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/power_value" type="array">
+      <obj_property name="ElementShortName">power_value[63:0]</obj_property>
+      <obj_property name="ObjectShortName">power_value[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/FFT_POINTS" type="array">
+      <obj_property name="ElementShortName">FFT_POINTS[31:0]</obj_property>
+      <obj_property name="ObjectShortName">FFT_POINTS[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/HOLD_FRAMES" type="array">
+      <obj_property name="ElementShortName">HOLD_FRAMES[31:0]</obj_property>
+      <obj_property name="ObjectShortName">HOLD_FRAMES[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/PRE_SAMPLES" type="array">
+      <obj_property name="ElementShortName">PRE_SAMPLES[31:0]</obj_property>
+      <obj_property name="ObjectShortName">PRE_SAMPLES[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/POST_SAMPLES" type="array">
+      <obj_property name="ElementShortName">POST_SAMPLES[31:0]</obj_property>
+      <obj_property name="ObjectShortName">POST_SAMPLES[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/CAPTURE_SAMPLES" type="array">
+      <obj_property name="ElementShortName">CAPTURE_SAMPLES[31:0]</obj_property>
+      <obj_property name="ObjectShortName">CAPTURE_SAMPLES[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/LOG_DEPTH" type="array">
+      <obj_property name="ElementShortName">LOG_DEPTH[31:0]</obj_property>
+      <obj_property name="ObjectShortName">LOG_DEPTH[31:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/u_spectrum_engine/capture_ready" type="logic">
+      <obj_property name="ElementShortName">capture_ready</obj_property>
+      <obj_property name="ObjectShortName">capture_ready</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/u_spectrum_engine/trigger_pulse" type="logic">
+      <obj_property name="ElementShortName">trigger_pulse</obj_property>
+      <obj_property name="ObjectShortName">trigger_pulse</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/u_spectrum_engine/trigger_bin" type="array">
+      <obj_property name="ElementShortName">trigger_bin[9:0]</obj_property>
+      <obj_property name="ObjectShortName">trigger_bin[9:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/u_spectrum_engine/capture_done" type="logic">
+      <obj_property name="ElementShortName">capture_done</obj_property>
+      <obj_property name="ObjectShortName">capture_done</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/capture_beat" type="array">
+      <obj_property name="ElementShortName">capture_beat[31:0]</obj_property>
+      <obj_property name="ObjectShortName">capture_beat[31:0]</obj_property>
+      <obj_property name="Radix">SIGNEDDECRADIX</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/u_spectrum_engine/max_hold_frames_cfg" type="array">
+      <obj_property name="ElementShortName">max_hold_frames_cfg[15:0]</obj_property>
+      <obj_property name="ObjectShortName">max_hold_frames_cfg[15:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/dma_output_select" type="logic">
+      <obj_property name="ElementShortName">dma_output_select</obj_property>
+      <obj_property name="ObjectShortName">dma_output_select</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/trigger_power_threshold" type="array">
+      <obj_property name="ElementShortName">trigger_power_threshold[63:0]</obj_property>
+      <obj_property name="ObjectShortName">trigger_power_threshold[63:0]</obj_property>
+   </wvobject>
+   <wvobject fp_name="/tb_logic_top_modified/dut/capture_arm" type="logic">
+      <obj_property name="ElementShortName">capture_arm</obj_property>
+      <obj_property name="ObjectShortName">capture_arm</obj_property>
+   </wvobject>
+</wave_config>
